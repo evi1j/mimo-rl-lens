@@ -1,0 +1,14 @@
+{
+  "_comment": "AI 解说配置。默认关闭（enabled=false）——此时解说全部由内置规则引擎生成，展开仍有知识点讲解，页面不会空白。接入自己的 OpenAI 兼容接口后，把 enabled 改为 true 并填写 baseUrl / apiKey / model 三项即可，改完无需重启服务。",
+  "llm": {
+    "enabled": false,
+    "baseUrl": "http://127.0.0.1:8090/v1",
+    "apiKey": "",
+    "model": "",
+    "temperature": 0.3,
+    "timeoutMs": 180000,
+    "maxTokens": 4000,
+    "reasoningEffort": "",
+    "maxItemsPerPoll": 3
+  }
+}

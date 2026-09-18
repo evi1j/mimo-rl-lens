@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MiMo-V2.6 · RL 实时训练看板</title>
 <meta name="description" content="mimo-v2.6-pro / flash 强化学习训练实时指标面板，数据直连小米官方 trainer 日志。">
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 
@@ -88,6 +88,16 @@
     <div class="ds-grid" id="ds-grid"></div>
   </section>
 
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>训练指标全景 <span class="tag">官方精选 18 项</span></h2>
+        <p class="panel-sub">每一步的训练健康度指标 · 鼠标悬停看说明</p>
+      </div>
+    </div>
+    <div class="metric-grid" id="metric-grid"><div class="empty">加载中…</div></div>
+  </section>
+
 </main>
 
 <aside class="side-col">
@@ -155,7 +165,7 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="narrator.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="narrator.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

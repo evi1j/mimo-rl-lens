@@ -346,6 +346,45 @@ body::before {
 .nar-gloss dt { font-weight: 600; margin-top: 9px; }
 .nar-gloss dd { margin: 2px 0 0; color: var(--dim); line-height: 1.65; }
 
+/* ---------- 训练指标全景 ---------- */
+.swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: none; }
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.metric-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 11px 13px 12px;
+  min-width: 0;
+}
+.m-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.m-zh { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.m-key { font-size: 10.5px; color: var(--dim-2); flex: none; }
+
+.m-vals { display: flex; flex-wrap: wrap; gap: 2px 16px; margin: 7px 0 0; }
+.m-val { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.m-num { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.m-delta { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.m-delta.up { color: var(--up); }
+.m-delta.down { color: var(--down); }
+
+.m-chart { height: 78px; margin: 2px -2px 7px; }
+.m-chart svg { width: 100%; height: 100%; display: block; overflow: visible; }
+
+.m-desc {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .layout { grid-template-columns: 1fr; }
@@ -356,10 +395,12 @@ body::before {
   .row { grid-template-columns: 1fr; }
   .ds-grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
   .rc-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .metric-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 @media (max-width: 620px) {
   .wrap { padding: 0 14px; }
   .brand-sub { display: none; }
   #updated { display: none; }
   .ds-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .metric-grid { grid-template-columns: 1fr; }
 }

@@ -546,6 +546,7 @@
   var glAiToken = 0;
   var glAiBuf = null;
   var glAiAvail = null; // null=还没探测，true/false=探测结果
+  var glAiThinkOpen = false; // 思考框的展开状态：重渲染时保持，否则会被合上
   /* 讲解抽屉的两个分页：fixed=程序写死的固定讲解，ai=调用模型生成的讲解。
      两者分开显示，避免「哪些是写死的、哪些是模型说的」混在一起看不清。 */
   var glTab = "fixed";
@@ -785,8 +786,12 @@
                  (st && st.model ? esc(st.model) : "") + "</span>" + why +
              "</div>" +
              hint +
-             '<details class="gl-ai-think" id="gl-ai-think"' + (think ? "" : " hidden") + ">" +
-               "<summary>AI 思考过程</summary>" +
+             '<details class="gl-ai-think" id="gl-ai-think"' +
+               (glAiThinkOpen ? " open" : "") + (think ? "" : " hidden") + ">" +
+               "<summary>" +
+                 '<span class="gl-spin" aria-hidden="true"></span>' +
+                 '<span id="gl-ai-think-t">AI 思考过程</span>' +
+               "</summary>" +
                '<div class="gl-ai-think-b">' + esc(think) + "</div>" +
              "</details>" +
              '<div class="' + cls + '" id="gl-ai-out"' + (text ? "" : " hidden") + ">" +
@@ -820,18 +825,41 @@
 
     var token = ++glAiToken;
     glAiBusy = true;
-    glAiBuf = { key: key, acc: "", think: "", model: "", err: "" };
+    glAiBuf = { key: key, acc: "", think: "", model: "", err: "", started: false };
     glAi[key] = null;
 
+    // 思考阶段正文还没开始，先给一句占位——空白框会让人以为卡住了
     out.hidden = false;
-    out.className = "gl-ai-out is-typing";
-    out.textContent = "";
+    out.className = "gl-ai-out is-wait";
+    out.textContent = "AI 正在思考，想清楚后开始输出…";
     if (thinkEl) {
       thinkEl.hidden = true;
       var tb = thinkEl.querySelector(".gl-ai-think-b");
       if (tb) tb.textContent = "";
     }
     if (statusEl) { statusEl.hidden = false; statusEl.textContent = "AI 正在读取当前数据…"; }
+
+    /* 思考中把折叠标题改成「正在思考…」并转圈，思考结束改回静态标题。
+       这样收起状态下也能一眼看出在干什么，而不是一个空白框。 */
+    function setThinking(on) {
+      if (thinkEl) {
+        if (on) thinkEl.classList.add("is-live");
+        else thinkEl.classList.remove("is-live");
+      }
+      var tEl = $("gl-ai-think-t");
+      if (tEl) tEl.textContent = on ? "正在思考…" : "AI 思考过程";
+    }
+
+    /* 思考内容在长，展开后要自己往下拖才能看到新字，很累。
+       思考阶段（正文还没开始）始终贴底；正文开始后只在用户本来就在底部时才跟随。 */
+    function followThink(force) {
+      if (!thinkEl || !thinkEl.open) return;
+      var tbox = thinkEl.querySelector(".gl-ai-think-b");
+      if (!tbox) return;
+      if (force || tbox.scrollHeight - tbox.scrollTop - tbox.clientHeight < 60) {
+        tbox.scrollTop = tbox.scrollHeight;
+      }
+    }
 
     /* 让最新文字始终可见。只在用户已经贴着底部时才跟随，
        否则会打断他往上翻阅读。 */
@@ -847,6 +875,7 @@
       glAiBuf = null;
       if (!buf || token !== glAiToken) return;
       if (statusEl) statusEl.hidden = true;
+      setThinking(false); // 收尾时一定把转圈和「正在思考」撤掉
       out.className = "gl-ai-out" + (buf.err ? " is-err" : "");
       if (buf.err) {
         out.textContent = buf.err;
@@ -881,6 +910,13 @@
             var b = glAiBuf;
             if (!b) continue;
             if (j.delta) {
+              // 收到第一段正文，说明思考结束了：撤掉占位、标题改回静态
+              if (!b.started) {
+                b.started = true;
+                out.className = "gl-ai-out is-typing";
+                out.textContent = "";
+                setThinking(false);
+              }
               b.acc += j.delta;
               if (statusEl) statusEl.textContent = "AI 正在写…";
               out.textContent = b.acc;
@@ -888,9 +924,10 @@
             } else if (j.think) {
               b.think += j.think;
               if (thinkEl) {
-                thinkEl.hidden = false;
+                if (thinkEl.hidden) { thinkEl.hidden = false; setThinking(true); }
                 var tbb = thinkEl.querySelector(".gl-ai-think-b");
                 if (tbb) tbb.textContent = b.think;
+                followThink(!b.started); // 思考阶段强制贴底，正文开始后只在贴底时跟随
               }
             } else if (j.done) {
               b.model = j.model || "";
@@ -945,10 +982,7 @@
             glTab = v;
             if (glAiBusy) glAiStop(); // 别让旧流写进即将被换掉的节点
             renderGlossary(glCur);
-            // 切到 AI 页且这个指标还没讲过时自动跑一次，省一次点击
-            if (v === "ai" && glCur && !glAi[glCur] && glAiAvail !== false && !glAiBusy) {
-              runAiExplain(glCur);
-            }
+            // 不自动开讲：点一下 tag 就烧一次 token 太贵，交给用户点按钮决定
           }
           return;
         }
@@ -965,6 +999,16 @@
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape") closeGlossary();
     });
+    /* 展开思考框时直接贴到底部：思考内容一直在涨，靠手动拖根本跟不上。
+       toggle 事件不冒泡，所以必须用捕获阶段监听。 */
+    document.addEventListener("toggle", function (e) {
+      var el = e.target;
+      if (!el || el.id !== "gl-ai-think") return;
+      glAiThinkOpen = !!el.open;
+      if (!el.open) return;
+      var tbox = el.querySelector(".gl-ai-think-b");
+      if (tbox) tbox.scrollTop = tbox.scrollHeight;
+    }, true);
   }
 
   function renderNotices() {

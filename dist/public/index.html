@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MiMo-V2.6 · RL 实时训练看板</title>
 <meta name="description" content="mimo-v2.6-pro / flash 强化学习训练实时指标面板，数据直连小米官方 trainer 日志。">
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 
@@ -64,12 +64,12 @@
   <section class="panel">
     <div class="panel-head">
       <div>
-        <h2>DeepSWE v1.1 <span class="mono tag">offline eval</span></h2>
-        <p class="panel-sub">mini-swe-agent, avg@3 · 随训练步离线评测</p>
+        <h2>离线评测 <span class="tag">随训练步定期评测</span></h2>
+        <p class="panel-sub">拿中间存档点去跑标准题库 · 与训练奖励无关，是独立的泛化检验</p>
       </div>
-      <div class="legend" id="legend-bench"></div>
+      <div id="bench-count" class="panel-note"></div>
     </div>
-    <div class="chart" id="chart-bench"></div>
+    <div class="bench-grid" id="bench-grid"><div class="empty">加载中…</div></div>
   </section>
 
   <div class="row">
@@ -231,7 +231,7 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="narrator.js?v=6"></script>
-<script src="app.js?v=6"></script>
+<script src="narrator.js?v=7"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

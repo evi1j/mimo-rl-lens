@@ -451,30 +451,81 @@
     }).join("");
   }
 
+  /* 离线评测基准的中文名与机制说明。
+     key 对应 api/benchmarks 里的 key；没有映射时用上游 note 兜底。 */
+  var BENCH_INFO = {
+    deepswe: {
+      zh: "DeepSWE · 真实仓库修 bug",
+      desc: "真实开源仓库的 bug 修复题：模型要读懂整个代码库、定位问题、写出能通过单元测试的补丁。" +
+            "奖励信号不靠人打分，而是直接用「测试跑不跑得过」判定，这正是可验证奖励的典型形态。",
+    },
+    "inhouse-coding": {
+      zh: "内部编码基准",
+      desc: "不外公开的私有题集，用来交叉验证模型不是只在公开榜单上刷分。" +
+            "公开基准的题目可能进了预训练语料，分数虚高，私有题集能暴露这种污染。",
+    },
+    automation: {
+      zh: "AutomationBench · 多步自动化任务",
+      desc: "自动化类任务：按指令在多步流程里操作环境、调用工具并达成目标，考察的是长程规划与执行。" +
+            "与「修一个 bug」这种单点任务互补，两者涨落不同步是正常的。",
+    },
+  };
+  var BENCH_FALLBACK_DESC = "训练过程中定期拿中间存档点跑的离线评测。" +
+    "它不参与梯度更新，只是独立的泛化检验——训练分数涨、这里不涨，说明模型在刷训练分布而非真变强。";
+
   function renderBench() {
-    var host = $("chart-bench");
-    var b = state.bench && state.bench[0];
-    if (!b) { host.innerHTML = '<div class="empty">暂无评测数据</div>'; return; }
+    var grid = $("bench-grid");
+    if (!grid) return;
+    var list = state.bench || [];
+    var cnt = $("bench-count");
+    if (cnt) cnt.textContent = list.length ? "共 " + list.length + " 个基准" : "";
+    if (!list.length) { grid.innerHTML = '<div class="empty">暂无评测数据</div>'; return; }
 
-    var series = Object.keys(b.results).map(function (k) {
-      var pts = Object.keys(b.results[k]).map(Number).sort(function (a, c) { return a - c; }).map(function (s) {
-        return { x: s, y: b.results[k][s] };
-      });
-      return { name: "mimo-v2.6-" + k, color: COLORS[k] || "#888", pts: pts };
-    });
+    var built = list.map(function (b) {
+      var info = BENCH_INFO[b.key] || {};
+      var series = Object.keys(b.results || {}).map(function (k) {
+        var pts = Object.keys(b.results[k]).map(Number).sort(function (a, c) { return a - c; })
+                  .map(function (s) { return { x: s, y: b.results[k][s] }; });
+        return { name: "mimo-v2.6-" + k, color: COLORS[k] || "#888", pts: pts };
+      }).filter(function (s) { return s.pts.length; });
+      return { b: b, info: info, series: series };
+    }).filter(function (it) { return it.series.length; });
 
-    lineChart(host, series, {
-      height: 230,
-      yFmt: function (v) { return v.toFixed(1); },
-      xFmt: function (v) { return "s" + Math.round(v); },
-      tipFmt: function (v) { return v.toFixed(2); },
-    });
+    if (!built.length) { grid.innerHTML = '<div class="empty">暂无评测数据</div>'; return; }
 
-    $("legend-bench").innerHTML = series.map(function (s) {
-      var last = s.pts[s.pts.length - 1];
-      var best = s.pts.reduce(function (a, p) { return Math.max(a, p.y); }, -Infinity);
-      return '<span><i style="background:' + s.color + '"></i>' + esc(s.name) + " · 最新 " + last.y.toFixed(2) + " · 峰值 " + best.toFixed(2) + "</span>";
+    grid.innerHTML = built.map(function (it, i) {
+      var b = it.b;
+      var vals = it.series.map(function (s) {
+        var last = s.pts[s.pts.length - 1].y;
+        var prev = s.pts.length > 1 ? s.pts[s.pts.length - 2].y : null;
+        var first = s.pts[0].y;
+        var d = prev == null ? null : last - prev;
+        var total = last - first;
+        return '<div class="m-val"><i class="swatch" style="background:' + s.color + '"></i>' +
+               '<span class="m-num">' + last.toFixed(2) + "</span>" +
+               (d == null ? "" : '<span class="m-delta ' + (d > 0 ? "up" : d < 0 ? "down" : "") + '">' +
+                 (d > 0 ? "+" : "") + d.toFixed(2) + "</span>") +
+               '<span class="m-total ' + (total > 0 ? "up" : total < 0 ? "down" : "") + '">累计 ' +
+                 (total > 0 ? "+" : "") + total.toFixed(2) + "</span></div>";
+      }).join("");
+      return '<div class="bench-card">' +
+             '<div class="m-head"><span class="m-zh">' + esc(it.info.zh || b.title) + "</span>" +
+             '<span class="m-key mono">' + esc(b.title) + (b.note ? " · " + esc(b.note) : "") + "</span></div>" +
+             '<div class="m-vals">' + vals + "</div>" +
+             '<div class="m-chart" data-bi="' + i + '"></div>' +
+             '<div class="m-desc" title="' + esc(it.info.desc || BENCH_FALLBACK_DESC) + '">' +
+               esc(it.info.desc || BENCH_FALLBACK_DESC) + "</div>" +
+             "</div>";
     }).join("");
+
+    Array.prototype.forEach.call(grid.querySelectorAll(".m-chart"), function (el) {
+      var it = built[+el.dataset.bi];
+      if (!it) return;
+      lineChart(el, it.series, {
+        minimal: true, width: 340, height: 120,
+        tipFmt: function (v) { return v.toFixed(2); },
+      });
+    });
   }
 
   function renderNotices() {

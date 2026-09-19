@@ -80,6 +80,33 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
   check('训练批显示 ×N 采样', bn && /×\s*\d+\s*采样/.test(bn.textContent), bn && bn.textContent);
   check('vs 首步带涨跌符号', sf && /[▲▼]/.test(sf.textContent), sf && sf.textContent);
 
+  /* ---------- 3.5 离线评测基准 ---------- */
+  console.log('\n=== 离线评测基准 ===');
+  const benchGrid = doc.getElementById('bench-grid');
+  const bcards = doc.querySelectorAll('#bench-grid .bench-card');
+  check('评测面板存在', !!benchGrid);
+  // 上游 api/benchmarks 目前返回 3 个基准，不应再只画 DeepSWE 一个
+  check('渲染出全部基准（>=2 张卡）', bcards.length >= 2, '卡片 ' + bcards.length);
+  const bTitle = (doc.getElementById('bench-count') || {}).textContent || '';
+  check('显示基准总数', /共 \d+ 个基准/.test(bTitle), bTitle);
+  const bSvg = Array.from(bcards).filter(function (c) { return c.querySelector('.m-chart svg'); }).length;
+  check('每张卡都带折线图', bcards.length > 0 && bSvg === bcards.length, bSvg + '/' + bcards.length);
+  const bNames = Array.from(bcards).map(function (c) { return (c.querySelector('.m-zh') || {}).textContent; });
+  check('卡片都有中文名', bNames.every(function (n) { return n && /[一-龥]/.test(n); }), bNames.join(' | '));
+  const bDescs = Array.from(bcards).map(function (c) { return (c.querySelector('.m-desc') || {}).textContent || ''; });
+  check('卡片都有说明文字', bDescs.every(function (d) { return d.length > 20; }));
+  // 每张卡应同时给出 pro / flash 两个 run 的末值
+  const bVals = Array.from(bcards).map(function (c) { return c.querySelectorAll('.m-val').length; });
+  check('每张卡含两个 run 的数值', bVals.every(function (n) { return n === 2; }), bVals.join(','));
+  const bTotals = Array.from(bcards).map(function (c) { return c.querySelectorAll('.m-total').length; });
+  check('每张卡含累计涨幅', bTotals.every(function (n) { return n === 2; }), bTotals.join(','));
+  console.log('    基准:', bNames.join(' | '));
+  if (bcards[0]) {
+    console.log('    首卡数值:', Array.from(bcards[0].querySelectorAll('.m-val')).map(function (v) { return v.textContent.replace(/\s+/g, ' ').trim(); }).join('  '));
+  }
+  // 旧实现只画 chart-bench 单图，确认已移除
+  check('旧的单图容器已移除', !doc.getElementById('chart-bench'));
+
   /* ---------- 4. batch composition ---------- */
   console.log('\n=== 训练样本构成 ===');
   const compPanel = doc.getElementById('comp-panel');

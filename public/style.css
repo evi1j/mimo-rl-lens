@@ -346,6 +346,25 @@ body::before {
 .nar-gloss dt { font-weight: 600; margin-top: 9px; }
 .nar-gloss dd { margin: 2px 0 0; color: var(--dim); line-height: 1.65; }
 
+/* ---------- 离线评测基准 ---------- */
+.bench-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.bench-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 11px 13px 12px;
+  min-width: 0;
+}
+.bench-card .m-chart { height: 104px; margin: 4px -2px 8px; }
+.m-total { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.m-total.up { color: var(--up); }
+.m-total.down { color: var(--down); }
+.panel-note { font-size: 11.5px; color: var(--dim-2); flex: none; margin-top: 3px; }
+
 /* ---------- 训练指标全景 ---------- */
 .swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: none; }
 
@@ -492,14 +511,14 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
   .row { grid-template-columns: 1fr; }
   .ds-grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
   .rc-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .metric-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .metric-grid, .bench-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 @media (max-width: 620px) {
   .wrap { padding: 0 14px; }
   .brand-sub { display: none; }
   #updated { display: none; }
   .ds-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .metric-grid { grid-template-columns: 1fr; }
+  .metric-grid, .bench-grid { grid-template-columns: 1fr; }
   .comp-layout { grid-template-columns: 1fr; }
   .metrics-layout { grid-template-columns: 1fr; }
   .tree { max-height: 260px; }

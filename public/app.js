@@ -705,6 +705,7 @@
     var d = $("gl-drawer"), m = $("gl-mask");
     if (d) d.hidden = true;
     if (m) m.hidden = true;
+    if (glAiBusy) glAiStop(); // 抽屉都关了就别再烧 token，半截结果存进缓存
     glCur = null;
   }
 
@@ -988,6 +989,14 @@
         }
         var ab = t.closest(".gl-ai-btn[data-ai]");
         if (ab && !ab.disabled) { runAiExplain(ab.dataset.ai); return; }
+      }
+      /* 遮罩已改成 pointer-events:none，点击会直接落到下面的元素上，
+         所以「点抽屉外面就关」要在这里兜底。讲解触发元素在上面已 return，
+         不会被这条误关。 */
+      var dw = $("gl-drawer");
+      if (dw && !dw.hidden && !(t.closest && t.closest("#gl-drawer"))) {
+        closeGlossary();
+        return;
       }
       if (t.id === "gl-close" || t.id === "gl-mask") { closeGlossary(); return; }
       if (t.id === "gl-prev" || t.id === "gl-next") {

@@ -531,8 +531,11 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
 .metric-card:hover, .bench-card:hover { border-color: var(--accent); transform: translateY(-1px); }
 
 /* ---------- 讲解抽屉 ---------- */
+/* 遮罩只负责压暗，不拦点击：否则抽屉开着时点另一张指标卡片，
+   这次点击会被遮罩吃掉（判定成「点外面关闭」），得再点一次才打开。 */
 .gl-mask {
   position: fixed; inset: 0; background: rgba(15, 20, 30, .38); z-index: 60;
+  pointer-events: none;
 }
 .gl-drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 94vw);

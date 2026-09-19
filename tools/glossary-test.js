@@ -139,6 +139,26 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
         wantKey);
   console.log('    卡片讲解:', doc.getElementById('gl-title').textContent);
 
+  /* 抽屉已经开着时再点另一张卡片：应当直接切换过去。
+     曾经遮罩是全屏可点击的，这次点击会被当成「点外面」把抽屉关掉，
+     于是表现为「点了没反应、要再点一次」。 */
+  const c5 = cards[4];
+  const wantKey2 = c5.dataset.gk;
+  click(c5);
+  await sleep(500);
+  const sub2 = (doc.getElementById('gl-sub') || {}).textContent || '';
+  check('抽屉开着时点另一张卡片直接切换',
+        !drawer.hidden && sub2 === wantKey2,
+        'hidden=' + drawer.hidden + ' | ' + sub2 + ' vs ' + wantKey2);
+
+  // 点抽屉外、又不是讲解触发元素的地方：仍然要能关掉
+  click(doc.querySelector('.brand h1') || doc.body);
+  await sleep(300);
+  check('点抽屉外空白处关闭抽屉', drawer.hidden);
+  click(c5);
+  await sleep(400);
+  check('关掉后还能再打开', !drawer.hidden);
+
   /* ---------- 7. 面板「?」按钮 ---------- */
   console.log('\n=== 面板 ? 按钮 ===');
   for (const key of ['headline', 'bench', 'comp', 'metrics']) {

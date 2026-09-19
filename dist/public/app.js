@@ -207,7 +207,8 @@
         state.lastOk = Date.now();
         render();
         setLive(true);
-        if (glCur) renderGlossary(glCur, true);
+        // AI 正在吐字时不要重渲染抽屉，否则会换掉正在写入的节点
+        if (glCur && !glAiBusy) renderGlossary(glCur, true);
       })
       .catch(function (err) {
         var msg = String(err && err.message ? err.message : err);
@@ -534,6 +535,18 @@
      now 段是拿实时数值算出来的，所以讲的内容跟着数据走。 */
   var glCur = null;
 
+  /* AI 讲解的运行状态。
+     glAi[key] = {status:'done'|'error', text, think, model, err} —— 结果按指标缓存，
+       切走再切回来直接显示，不重复烧 token；想换一版点「重新生成」。
+     glAiBusy 为真时暂停抽屉的 10s 自动刷新：否则重渲染会换掉正在吐字的节点。
+     glAiBuf 保存当前流的累积内容，切换指标时能把半截结果存回 glAi[旧key]。
+     glAiToken 自增让旧流的回调失效，避免两个流互相覆盖。 */
+  var glAi = {};
+  var glAiBusy = false;
+  var glAiToken = 0;
+  var glAiBuf = null;
+  var glAiAvail = null; // null=还没探测，true/false=探测结果
+
   function glStatOf(ss, runKey) {
     for (var i = 0; i < ss.length; i++) {
       if (ss[i].key !== runKey) continue;
@@ -615,6 +628,19 @@
     var drawer = $("gl-drawer"), mask = $("gl-mask"), body = $("gl-body");
     if (!drawer || !body) return;
     var savedScroll = keepScroll ? body.scrollTop : 0;
+
+    // 正在某个指标上吐字时切走了：把半截结果存回缓存，并让旧流的回调失效
+    if (glAiBusy && glAiBuf && glAiBuf.key !== key) {
+      glAiToken++;
+      glAiBusy = false;
+      if (glAiBuf.acc) {
+        glAi[glAiBuf.key] = {
+          status: "done", text: glAiBuf.acc, think: glAiBuf.think, model: glAiBuf.model,
+        };
+      }
+      glAiBuf = null;
+    }
+
     glCur = key;
     var G = GLOSSARY;
 
@@ -669,7 +695,8 @@
                          glSec("这张图怎么看", "<p>" + esc(it.read) + "</p>") +
                          glSec("现在的数在说什么", vals + "<p>" + esc(nowTxt) + "</p>") +
                          glSec("什么情况要警惕", "<p>" + esc(it.watch) + "</p>") +
-                         glLinks(it.link);
+                         glLinks(it.link) +
+                         glAiHtml(key);
         $("gl-foot").hidden = false;
         $("gl-pos").textContent = (idx + 1) + " / " + G.order.length;
         $("gl-prev").hidden = idx <= 0;
@@ -689,6 +716,180 @@
     glCur = null;
   }
 
+  /* ---------------- AI 讲解（流式吐字） ---------------- */
+
+  /* 组装喂给 AI 的上下文：精选，不塞全量。
+     固定文案当机制底稿，实时数值才是要它解读的对象。 */
+  function glAiPayload(key) {
+    var it = GLOSSARY.items[key];
+    var c = glCtx(key);
+    var ss = metricSeries(key);
+    var recent = {};
+    ss.forEach(function (s) {
+      recent[s.key] = s.pts.slice(-12).map(function (p) {
+        return { step: p.x, v: Math.round(p.y * 1e6) / 1e6 };
+      });
+    });
+    var st = state.status && state.status.pro;
+    return {
+      key: key,
+      zh: it ? it.zh : key,
+      unit: it ? (it.unit || "num") : "num",
+      static: it ? { one: it.one, what: it.what, read: it.read, watch: it.watch } : null,
+      live: {
+        last: c.last, prev: c.prev, first: c.first,
+        min: c.min, max: c.max, delta: c.delta,
+        flash: c.flash, steps: c.n,
+      },
+      recent: recent,
+      run: {
+        step: st && st.step && st.step.last,
+        phase: st && st.step && st.step.phase,
+      },
+    };
+  }
+
+  /* 抽屉底部的 AI 区块。缓存命中时直接渲染已生成内容，不再请求。 */
+  function glAiHtml(key) {
+    var st = glAi[key];
+    var label = st && st.status === "done" ? "重新生成" : "AI 讲解当前数据";
+    var disabled = (glAiAvail === false || glAiBusy) ? " disabled" : "";
+    var why = glAiAvail === false
+      ? '<span class="gl-ai-why">AI 未启用，见 config.json 的 llm.enabled</span>' : "";
+    var text = "", cls = "gl-ai-out";
+    if (st && st.status === "done") text = st.text;
+    else if (st && st.status === "error") { text = st.err || "生成失败"; cls += " is-err"; }
+    var think = st && st.think ? st.think : "";
+    return '<div class="gl-ai">' +
+             '<div class="gl-ai-bar">' +
+               '<button class="gl-ai-btn" data-ai="' + esc(key) + '"' + disabled + ">" + label + "</button>" +
+               '<span class="gl-ai-status" id="gl-ai-status" hidden></span>' +
+               '<span class="gl-ai-model" id="gl-ai-model">' +
+                 (st && st.model ? esc(st.model) : "") + "</span>" + why +
+             "</div>" +
+             '<div class="' + cls + '" id="gl-ai-out"' + (text ? "" : " hidden") + ">" +
+               esc(text) + "</div>" +
+             '<div class="gl-ai-think" id="gl-ai-think"' + (think ? "" : " hidden") + ">" +
+               '<div class="gl-ai-think-t">AI 思考过程</div>' +
+               '<div class="gl-ai-think-b">' + esc(think) + "</div>" +
+             "</div>" +
+           "</div>";
+  }
+
+  /* 点按钮：POST /api/explain，边收边往 #gl-ai-out 里追加，实现吐字效果。 */
+  function runAiExplain(key) {
+    if (glAiBusy) return;
+    var out = $("gl-ai-out"), statusEl = $("gl-ai-status"), thinkEl = $("gl-ai-think");
+    if (!out) return;
+
+    var token = ++glAiToken;
+    glAiBusy = true;
+    glAiBuf = { key: key, acc: "", think: "", model: "", err: "" };
+    glAi[key] = null;
+
+    out.hidden = false;
+    out.className = "gl-ai-out is-typing";
+    out.textContent = "";
+    if (thinkEl) {
+      thinkEl.hidden = true;
+      var tb = thinkEl.querySelector(".gl-ai-think-b");
+      if (tb) tb.textContent = "";
+    }
+    if (statusEl) { statusEl.hidden = false; statusEl.textContent = "AI 正在读取当前数据…"; }
+
+    /* 让最新文字始终可见。只在用户已经贴着底部时才跟随，
+       否则会打断他往上翻阅读。 */
+    function follow() {
+      var b = $("gl-body");
+      if (!b) return;
+      if (b.scrollHeight - b.scrollTop - b.clientHeight < 140) b.scrollTop = b.scrollHeight;
+    }
+
+    function finish() {
+      glAiBusy = false;
+      var buf = glAiBuf;
+      glAiBuf = null;
+      if (!buf || token !== glAiToken) return;
+      if (statusEl) statusEl.hidden = true;
+      out.className = "gl-ai-out" + (buf.err ? " is-err" : "");
+      if (buf.err) {
+        out.textContent = buf.err;
+        glAi[key] = { status: "error", err: buf.err };
+      } else if (buf.acc) {
+        // 模型爱在正文开头吐几个换行，pre-wrap 下会显示成空白行，去掉
+        var txt = String(buf.acc).replace(/^[\s　]+/, "");
+        out.textContent = txt;
+        glAi[key] = { status: "done", text: txt, think: buf.think, model: buf.model };
+        var mEl = $("gl-ai-model");
+        if (mEl && buf.model) mEl.textContent = buf.model;
+        var btn = document.querySelector('.gl-ai-btn[data-ai="' + key + '"]');
+        if (btn) { btn.disabled = false; btn.textContent = "重新生成"; }
+      } else {
+        out.hidden = true;
+      }
+    }
+
+    function pump(reader) {
+      var dec = new TextDecoder("utf-8"), buf = "";
+      function step() {
+        return reader.read().then(function (r) {
+          if (r.done) { finish(); return; }
+          buf += dec.decode(r.value, { stream: true });
+          var lines = buf.split("\n");
+          buf = lines.pop() || "";
+          for (var i = 0; i < lines.length; i++) {
+            if (!lines[i]) continue;
+            if (token !== glAiToken) return; // 已被新的请求顶掉
+            var j;
+            try { j = JSON.parse(lines[i]); } catch (e) { continue; }
+            var b = glAiBuf;
+            if (!b) continue;
+            if (j.delta) {
+              b.acc += j.delta;
+              if (statusEl) statusEl.textContent = "AI 正在写…";
+              out.textContent = b.acc;
+              follow();
+            } else if (j.think) {
+              b.think += j.think;
+              if (thinkEl) {
+                thinkEl.hidden = false;
+                var tbb = thinkEl.querySelector(".gl-ai-think-b");
+                if (tbb) tbb.textContent = b.think;
+              }
+            } else if (j.done) {
+              b.model = j.model || "";
+            } else if (j.error) {
+              b.err = j.error;
+            }
+          }
+          return step();
+        });
+      }
+      return step();
+    }
+
+    fetch("api/explain", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(glAiPayload(key)),
+    }).then(function (r) {
+      if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
+      return pump(r.body.getReader());
+    }).catch(function (e) {
+      if (glAiBuf) glAiBuf.err = String(e && e.message ? e.message : e) || "生成失败";
+      finish();
+    });
+  }
+
+  /* 探测 AI 是否可用，不可用就把按钮置灰，而不是让用户点了才报错。 */
+  function probeAi() {
+    getJSON("api/ai/test").then(function (r) {
+      glAiAvail = !!(r && r.enabled && r.ok);
+    }).catch(function () {
+      glAiAvail = false;
+    });
+  }
+
   function bindGlossary() {
     if (bindGlossary._done) return;   // 防重复绑定：否则一次点击会被处理两遍
     bindGlossary._done = true;
@@ -701,6 +902,8 @@
         if (gm) { renderGlossary(gm.dataset.gm); return; }
         var gk = t.closest("[data-gk]");
         if (gk) { renderGlossary(gk.dataset.gk); return; }
+        var ab = t.closest(".gl-ai-btn[data-ai]");
+        if (ab && !ab.disabled) { runAiExplain(ab.dataset.ai); return; }
       }
       if (t.id === "gl-close" || t.id === "gl-mask") { closeGlossary(); return; }
       if (t.id === "gl-prev" || t.id === "gl-next") {
@@ -1472,6 +1675,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     initTheme();
     bindGlossary();
+    probeAi();
     initNav();
     bindSeg("run-switch", function () { return state.evRun; }, function (v) { state.evRun = v; });
     bindSeg("ds-run-switch", function () { return state.dsRun; }, function (v) { state.dsRun = v; });

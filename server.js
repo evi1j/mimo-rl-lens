@@ -235,6 +235,59 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* 指标讲解：POST /api/explain —— 流式吐字。
+     响应是 NDJSON（每行一个 JSON，逐行推给前端）：
+       {"think":"..."}  推理型模型的思考过程（可折叠查看）
+       {"delta":"..."}  正文片段，前端边收边追加
+       {"done":true,"model":"..."}
+       {"error":"..."}  出错时给出原因，前端原样显示
+     客户端关掉抽屉时 req 会 close，send 返回 false 即中止生成，不浪费 token。 */
+  if (p === '/api/explain') {
+    if (req.method !== 'POST') { sendJSON(res, 405, { error: '请用 POST' }); return; }
+    let raw = '';
+    try {
+      for await (const chunk of req) {
+        raw += chunk;
+        if (raw.length > 200000) break; // body 异常大时截断，避免撑爆内存
+      }
+    } catch (e) {
+      sendJSON(res, 400, { error: '读取请求体失败' });
+      return;
+    }
+    let payload;
+    try { payload = JSON.parse(raw); } catch (e) {
+      sendJSON(res, 400, { error: '请求体不是合法 JSON' });
+      return;
+    }
+    if (!payload || typeof payload.key !== 'string') {
+      sendJSON(res, 400, { error: '缺少指标 key' });
+      return;
+    }
+
+    res.writeHead(200, {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-accel-buffering': 'no', // 有反代时也不要缓冲，否则吐字会卡住
+    });
+    let closed = false;
+    req.on('close', function () { closed = true; });
+    const send = function (obj) {
+      if (closed) return false;
+      try { res.write(JSON.stringify(obj) + '\n'); return true; } catch (e) { return false; }
+    };
+    try {
+      const out = await llm.explainMetric(
+        payload,
+        function (t) { return send({ delta: t }); },
+        function (t) { return send({ think: t }); });
+      send({ done: true, model: out.model });
+    } catch (e) {
+      send({ error: String(e.message || e).slice(0, 300) });
+    }
+    try { res.end(); } catch (e) { /* 客户端已断开 */ }
+    return;
+  }
+
   // 本地存档统计（SQLite）
   if (p === '/api/db/stats') {
     sendJSON(res, 200, store.stats());

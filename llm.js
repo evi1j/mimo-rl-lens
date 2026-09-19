@@ -17,6 +17,11 @@ const DEFAULTS = {
   maxTokens: 2500, // 推理型模型会先输出一大段思考，额度给小了正文 JSON 会被截断
   reasoningEffort: 'medium', // 开思考时固定 medium：思考过长会拖慢响应并挤占正文额度
   maxItemsPerPoll: 3,
+  // 讲解（explain）单独一套：它要求输出更长（三段约 400 字），思考挤占更严重。
+  // 实测同一模型讲一个指标：不传 effort 时思考约 1338 字、正文被挤到只剩 183 字；
+  // 传 low 时思考降到约 480 字、正文 359 字且更快出字。minimal 本服务不支持（400）。
+  explainMaxTokens: 4000,
+  explainReasoningEffort: 'low',
 };
 
 function loadConfig() {
@@ -275,4 +280,151 @@ async function probe() {
   }
 }
 
-module.exports = { loadConfig, narrate, probe, status, listModels };
+/* ================================================================
+   指标讲解（流式吐字）
+   与 narrate 的区别：narrate 是等全部生成完再解析 JSON；
+   这里要边生成边回传给前端，所以走 SSE 流、输出纯文本段落。
+   ================================================================ */
+
+const EXPLAIN_SYSTEM = [
+  '你是大模型强化学习（RL）训练看板的讲解员。观众点开了某个指标，已经读过该指标的固定讲解',
+  '（在 static 字段里），现在想听你结合「此刻的真实数据」再讲一遍。',
+  '',
+  '核心原则：',
+  '- 重点放在「这些数字现在说明了什么」，而不是重新定义这个指标。',
+  '  static 里已经讲过的定义不要复述，观众看过了。',
+  '- 禁止用「就像考试一样」「好比练车」这类生活比喻代替解释。直接讲机制、讲因果、讲设计取舍。',
+  '- 术语照用（rollout、advantage、on-policy、熵坍缩、KL、重要性采样…），',
+  '  首次出现时当场解释它在干什么。术语本身就是知识点，不要为了「通俗」而回避。',
+  '- 只使用 data 里给的数字。没有的数字不要编，也不要臆测没给出信息的原因。',
+  '- 语气平实，不煽情，不用「值得注意的是」「综上所述」这类套话。',
+  '',
+  '输出三段纯文本，段落之间空一行。不要 markdown 标题符号、不要列表符号、不要代码块。',
+  '',
+  '第 1 段：这个数现在处在什么状态。要结合具体数字——当前值、相对第一步变化了多少、',
+  '  在历史最高与最低之间处于什么位置、最近一步往哪个方向走。',
+  '第 2 段：从机制上解释为什么会是这样、意味着什么。讲清因果链或设计取舍，',
+  '  能给数学直觉就给（例如 advantage 是组内相对分，全对全错时组内方差为 0、梯度归零）。',
+  '第 3 段：接下来该盯什么——配套看哪个指标、什么样的变化才算异常、什么情况其实不必紧张。',
+  '',
+  '每段 2~4 句，全文不超过 400 字。',
+].join('\n');
+
+/* SSE 流式读取。逐块解析 `data:` 行：
+   推理型模型先吐思考（reasoning_content / reasoning）再吐正文（content），
+   两者分开回调，前端只把正文上屏。onDelta/onThink 返回 false 表示客户端已断开，
+   立刻停止读取并取消流，不再浪费 token。 */
+async function streamChat(cfg, messages, onDelta, onThink, effort) {
+  const model = await resolveModel(cfg);
+  const url = String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions';
+  const body = {
+    model: model,
+    messages: messages,
+    temperature: Number(cfg.temperature) || 0.3,
+    // 额度给足：讲解的提示词带固定文案底稿，比解说长得多，
+    // 思考一旦吃满额度正文就一个字都出不来（实测过）。
+    max_tokens: Number(cfg.explainMaxTokens) || 4000,
+    stream: true,
+  };
+  // effort 由调用方指定；为空则不传，交给服务默认行为
+  if (effort) body.reasoning_effort = effort;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer ' + (cfg.apiKey || 'sk-no-key'),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(Number(cfg.timeoutMs) || 120000),
+  });
+  if (!res.ok || !res.body) {
+    let detail = '';
+    try { detail = (await res.text()).slice(0, 200); } catch (e) { /* ignore */ }
+    throw new Error('HTTP ' + res.status + ' ' + detail);
+  }
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder('utf-8');
+  let buf = '';
+  let stop = false;
+  try {
+    for (;;) {
+      const r = await reader.read();
+      if (r.done) break;
+      buf += dec.decode(r.value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        const t = line.trim();
+        if (t.indexOf('data:') !== 0) continue;
+        const payload = t.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        let j;
+        try { j = JSON.parse(payload); } catch (e) { continue; }
+        const d = j && j.choices && j.choices[0] && j.choices[0].delta;
+        if (!d) continue;
+        const think = typeof d.reasoning_content === 'string' ? d.reasoning_content
+          : (typeof d.reasoning === 'string' ? d.reasoning : '');
+        if (think && onThink && onThink(think) === false) { stop = true; break; }
+        if (typeof d.content === 'string' && d.content && onDelta(d.content) === false) { stop = true; break; }
+      }
+      if (stop) break;
+    }
+  } finally {
+    if (stop) { try { await reader.cancel(); } catch (e) { /* ignore */ } }
+  }
+  return model;
+}
+
+/* 讲解某个指标。payload 由前端组装（含该指标的固定文案与实时数值）。
+   onDelta 收到正文片段，onThink 收到思考过程。失败一律抛错，由调用方降级。 */
+async function explainMetric(payload, onDelta, onThink) {
+  const cfg = loadConfig();
+  setStatus({ enabled: !!cfg.enabled, baseUrl: cfg.baseUrl });
+  if (!cfg.enabled) {
+    setStatus({ ok: false, lastError: '未启用（config.json 里 llm.enabled=false）' });
+    throw new Error('AI 未启用（config.json 里 llm.enabled=false）');
+  }
+  const messages = [
+    { role: 'system', content: EXPLAIN_SYSTEM },
+    { role: 'user', content: JSON.stringify(payload, null, 1) },
+  ];
+  const effort = cfg.explainReasoningEffort || 'low';
+  try {
+    let model;
+    try {
+      model = await streamChat(cfg, messages, onDelta, onThink, effort);
+    } catch (e1) {
+      // 有的服务不认某个 reasoning_effort（会返回 400）。这时候还没开始吐字，
+      // 去掉该参数重试是安全的，不会把内容重复推给前端。
+      if (/HTTP 400/.test(String(e1.message || e1))) {
+        console.log('ai explain: reasoning_effort=' + effort + ' 不被支持，去掉后重试');
+        model = await streamChat(cfg, messages, onDelta, onThink, null);
+      } else {
+        throw e1;
+      }
+    }
+    setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000, lastError: null, generated: status.generated + 1 });
+    return { model: model };
+  } catch (e) {
+    // 模型名不对时自动换一个可用的再试一次
+    if (isModelError(e)) {
+      try {
+        const models = await listModels(cfg);
+        const alt = models.filter((m) => m !== cfg.model)[0];
+        if (alt) {
+          console.log(`ai explain: 模型 ${cfg.model} 不可用，自动改用 ${alt}`);
+          const model = await streamChat(Object.assign({}, cfg, { model: alt }), messages, onDelta, onThink, effort);
+          setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000, lastError: null, generated: status.generated + 1 });
+          return { model: model };
+        }
+      } catch (e2) {
+        // 换模型也失败，落到下面统一报错
+      }
+    }
+    setStatus({ ok: false, lastError: String(e.message || e).slice(0, 160), failed: status.failed + 1 });
+    throw e;
+  }
+}
+
+module.exports = { loadConfig, narrate, probe, status, listModels, explainMetric };

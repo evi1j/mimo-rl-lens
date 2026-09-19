@@ -606,6 +606,48 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
 .gl-nav[hidden] { visibility: hidden; }
 .gl-pos { font-size: 11.5px; color: var(--dim-2); font-variant-numeric: tabular-nums; }
 
+/* ---------- 抽屉里的 AI 讲解（流式吐字） ---------- */
+.gl-ai { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.gl-ai-bar { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.gl-ai-btn {
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent); border-radius: 8px; padding: 6px 13px;
+  font-size: 12.5px; font-family: inherit; cursor: pointer;
+  transition: background .15s ease, opacity .15s ease;
+}
+.gl-ai-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.gl-ai-btn:disabled { opacity: .45; cursor: not-allowed; }
+.gl-ai-status { font-size: 11.5px; color: var(--dim); }
+.gl-ai-model { font-size: 11px; color: var(--dim-2); }
+.gl-ai-why { font-size: 11.5px; color: var(--dim); }
+.gl-ai-out {
+  margin-top: 10px; padding: 11px 13px; border-radius: 10px;
+  background: var(--panel-2); border: 1px solid var(--border-soft);
+  font-size: 13px; line-height: 1.85; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+}
+.gl-ai-out[hidden] { display: none; }
+.gl-ai-out.is-err {
+  color: var(--down);
+  border-color: color-mix(in srgb, var(--down) 35%, transparent);
+}
+/* 吐字光标：生成中在文末闪一个小竖条 */
+.gl-ai-out.is-typing::after {
+  content: ""; display: inline-block; width: 6px; height: 14px; margin-left: 2px;
+  vertical-align: -2px; background: var(--accent);
+  animation: gl-caret .9s step-end infinite;
+}
+@keyframes gl-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.gl-ai-think { margin-top: 8px; font-size: 11.5px; color: var(--dim); }
+.gl-ai-think[hidden] { display: none; }
+.gl-ai-think-t { margin-bottom: 4px; }
+.gl-ai-think-b {
+  max-height: 130px; overflow-y: auto; padding: 8px 10px; border-radius: 8px;
+  background: var(--panel); border: 1px solid var(--border-soft);
+  white-space: pre-wrap; line-height: 1.6; font-size: 11.5px;
+}
+
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .layout { grid-template-columns: 1fr; }

@@ -65,11 +65,14 @@ async function mainFlow() {
   card.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
   await sleep(600);
 
-  const btn = doc.querySelector('.gl-ai-btn[data-ai="dynsam/avg@n"]');
-  check('讲解里有 AI 按钮', !!btn);
-  check('AI 可用时按钮未置灰', btn && !btn.disabled);
-  check('按钮初始文案', btn && btn.textContent === 'AI 讲解当前数据',
-    btn ? btn.textContent : '');
+  /* --- 分页：固定讲解 / AI 讲解 --- */
+  const tabs = doc.querySelectorAll('.gl-tab[data-glt]');
+  check('有固定/AI 两个分页', tabs.length === 2, '实际 ' + tabs.length);
+  check('默认停在固定讲解页', tabs[0] && /on/.test(tabs[0].className),
+    tabs[0] ? tabs[0].className : '');
+  const bodyFixed = doc.getElementById('gl-body');
+  check('固定页显示写死的文案', /这是什么/.test(bodyFixed.textContent));
+  check('固定页不含 AI 区块', !doc.querySelector('.gl-ai'));
 
   // 记录是否真的发出了 POST 请求
   let posted = 0;
@@ -79,12 +82,20 @@ async function mainFlow() {
     return origFetch(u, opt);
   };
 
-  btn.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
-  await sleep(300);
+  // 切到 AI 页：应当自动开讲，不用再点一次按钮
+  tabs[1].dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await sleep(1200);
+
+  const bodyAi = doc.getElementById('gl-body');
+  check('AI 页不再重复写死的文案', !/这是什么/.test(bodyAi.textContent));
+  check('切到 AI 页自动发出 POST api/explain', posted === 1, '实际 ' + posted);
+  const btn = doc.querySelector('.gl-ai-btn[data-ai="dynsam/avg@n"]');
+  check('AI 页有按钮', !!btn);
+  check('AI 可用时按钮未置灰', btn && !btn.disabled);
+  check('AI 页顶部显示当前数值', !!doc.querySelector('.gl-ai .gl-now'));
 
   const out = doc.getElementById('gl-ai-out');
   const statusEl = doc.getElementById('gl-ai-status');
-  check('点击后发出了 POST api/explain', posted === 1, '实际 ' + posted);
   check('生成中显示状态提示', !!statusEl && !statusEl.hidden,
     statusEl ? String(statusEl.hidden) : 'no node');
   check('生成中输出框带吐字光标', !!out && /is-typing/.test(out.className),
@@ -130,6 +141,19 @@ async function mainFlow() {
     '| 思考过程:', sawThink ? '有' : '无',
     '| 字数:', String(finalTxt).length);
 
+  // 思考过程：必须能折叠，且排在正文之前（时间上它也确实先产生）
+  const thinkNode = doc.getElementById('gl-ai-think');
+  check('思考过程是 details 可折叠', thinkNode && thinkNode.tagName === 'DETAILS',
+    thinkNode ? thinkNode.tagName : '找不到节点');
+  check('思考排在正文之前', !!thinkNode && thinkNode.nextElementSibling === out);
+  if (thinkNode) {
+    check('思考默认收起', !thinkNode.hasAttribute('open'));
+    check('有可点击的折叠标题', !!thinkNode.querySelector('summary'));
+    const tb = thinkNode.querySelector('.gl-ai-think-b');
+    check('思考内容非空', !!tb && !!tb.textContent,
+      tb ? String(tb.textContent).length + ' 字' : '');
+  }
+
   // 切到下一个指标再切回来，验证缓存
   const nextBtn = doc.getElementById('gl-next');
   if (nextBtn) {
@@ -171,6 +195,9 @@ async function disabledFlow() {
   await sleep(8000);
   const card = doc.querySelector('.metric-card[data-gk="dynsam/avg@n"]');
   card.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await sleep(600);
+  const tabs = doc.querySelectorAll('.gl-tab[data-glt]');
+  tabs[1].dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
   await sleep(600);
 
   const btn = doc.querySelector('.gl-ai-btn[data-ai="dynsam/avg@n"]');

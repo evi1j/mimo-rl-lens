@@ -546,6 +546,9 @@
   var glAiToken = 0;
   var glAiBuf = null;
   var glAiAvail = null; // null=还没探测，true/false=探测结果
+  /* 讲解抽屉的两个分页：fixed=程序写死的固定讲解，ai=调用模型生成的讲解。
+     两者分开显示，避免「哪些是写死的、哪些是模型说的」混在一起看不清。 */
+  var glTab = "fixed";
 
   function glStatOf(ss, runKey) {
     for (var i = 0; i < ss.length; i++) {
@@ -629,17 +632,8 @@
     if (!drawer || !body) return;
     var savedScroll = keepScroll ? body.scrollTop : 0;
 
-    // 正在某个指标上吐字时切走了：把半截结果存回缓存，并让旧流的回调失效
-    if (glAiBusy && glAiBuf && glAiBuf.key !== key) {
-      glAiToken++;
-      glAiBusy = false;
-      if (glAiBuf.acc) {
-        glAi[glAiBuf.key] = {
-          status: "done", text: glAiBuf.acc, think: glAiBuf.think, model: glAiBuf.model,
-        };
-      }
-      glAiBuf = null;
-    }
+    // 正在某个指标上吐字时切走了：收尾，把半截结果存回缓存
+    if (glAiBusy && glAiBuf && glAiBuf.key !== key) glAiStop();
 
     glCur = key;
     var G = GLOSSARY;
@@ -682,21 +676,18 @@
         $("gl-sub").textContent = key;
         var nowTxt = "";
         try { nowTxt = it.now ? it.now(c) : ""; } catch (e) { nowTxt = ""; }
-        var vals = "";
-        if (c.last != null) {
-          vals = '<div class="gl-now">' +
-                 '<span class="gn-v">' + esc(fmtMetric(c.last, it.unit || "num")) + "</span>" +
-                 (c.delta == null ? "" : '<span class="gn-d ' + (c.delta > 0 ? "up" : c.delta < 0 ? "down" : "") + '">' +
-                   (c.delta > 0 ? "+" : "") + esc(fmtMetric(c.delta, it.unit || "num")) + "</span>") +
-                 '<span class="gn-k">pro 最新一步</span></div>';
+        var bodyHtml;
+        if (glTab === "ai") {
+          bodyHtml = glAiHtml(key, c);
+        } else {
+          bodyHtml = '<div class="gl-lead">' + esc(it.one) + "</div>" +
+                     glSec("这是什么", "<p>" + esc(it.what) + "</p>") +
+                     glSec("这张图怎么看", "<p>" + esc(it.read) + "</p>") +
+                     glSec("现在的数在说什么", glNowHtml(key, c) + "<p>" + esc(nowTxt) + "</p>") +
+                     glSec("什么情况要警惕", "<p>" + esc(it.watch) + "</p>") +
+                     glLinks(it.link);
         }
-        body.innerHTML = '<div class="gl-lead">' + esc(it.one) + "</div>" +
-                         glSec("这是什么", "<p>" + esc(it.what) + "</p>") +
-                         glSec("这张图怎么看", "<p>" + esc(it.read) + "</p>") +
-                         glSec("现在的数在说什么", vals + "<p>" + esc(nowTxt) + "</p>") +
-                         glSec("什么情况要警惕", "<p>" + esc(it.watch) + "</p>") +
-                         glLinks(it.link) +
-                         glAiHtml(key);
+        body.innerHTML = glTabsHtml() + bodyHtml;
         $("gl-foot").hidden = false;
         $("gl-pos").textContent = (idx + 1) + " / " + G.order.length;
         $("gl-prev").hidden = idx <= 0;
@@ -749,8 +740,31 @@
     };
   }
 
-  /* 抽屉底部的 AI 区块。缓存命中时直接渲染已生成内容，不再请求。 */
-  function glAiHtml(key) {
+  /* 当前数值卡片，固定讲解页与 AI 页共用。放在 AI 页顶部是为了让读者知道
+     模型看到的是哪几个数——AI 讲的内容全部出自这里。 */
+  function glNowHtml(key, c) {
+    var it = GLOSSARY.items[key];
+    if (!c || c.last == null) return "";
+    var kind = (it && it.unit) || "num";
+    return '<div class="gl-now">' +
+             '<span class="gn-v">' + esc(fmtMetric(c.last, kind)) + "</span>" +
+             (c.delta == null ? "" : '<span class="gn-d ' + (c.delta > 0 ? "up" : c.delta < 0 ? "down" : "") + '">' +
+               (c.delta > 0 ? "+" : "") + esc(fmtMetric(c.delta, kind)) + "</span>") +
+             '<span class="gn-k">pro 最新一步</span></div>';
+  }
+
+  /* 分页条：把「程序写死的」和「模型生成的」分开，避免混在一起分不清来源。 */
+  function glTabsHtml() {
+    return '<div class="gl-tabs">' +
+             '<button class="gl-tab' + (glTab === "fixed" ? " on" : "") + '" data-glt="fixed">固定讲解</button>' +
+             '<button class="gl-tab' + (glTab === "ai" ? " on" : "") + '" data-glt="ai">AI 讲解</button>' +
+           "</div>";
+  }
+
+  /* AI 讲解页。缓存命中时直接渲染已生成内容，不再请求。
+     思考过程用 details 折叠：它比正文先产生，所以排在正文上方；
+     默认收起，想看再点开，不占地方。 */
+  function glAiHtml(key, c) {
     var st = glAi[key];
     var label = st && st.status === "done" ? "重新生成" : "AI 讲解当前数据";
     var disabled = (glAiAvail === false || glAiBusy) ? " disabled" : "";
@@ -760,20 +774,42 @@
     if (st && st.status === "done") text = st.text;
     else if (st && st.status === "error") { text = st.err || "生成失败"; cls += " is-err"; }
     var think = st && st.think ? st.think : "";
+    var hint = st ? "" : '<p class="gl-ai-tip">模型会读取这个指标此刻的真实数据后开讲，' +
+                         "内容跟着数据走，不是背好的固定文案。</p>";
     return '<div class="gl-ai">' +
+             glNowHtml(key, c) +
              '<div class="gl-ai-bar">' +
                '<button class="gl-ai-btn" data-ai="' + esc(key) + '"' + disabled + ">" + label + "</button>" +
                '<span class="gl-ai-status" id="gl-ai-status" hidden></span>' +
                '<span class="gl-ai-model" id="gl-ai-model">' +
                  (st && st.model ? esc(st.model) : "") + "</span>" + why +
              "</div>" +
+             hint +
+             '<details class="gl-ai-think" id="gl-ai-think"' + (think ? "" : " hidden") + ">" +
+               "<summary>AI 思考过程</summary>" +
+               '<div class="gl-ai-think-b">' + esc(think) + "</div>" +
+             "</details>" +
              '<div class="' + cls + '" id="gl-ai-out"' + (text ? "" : " hidden") + ">" +
                esc(text) + "</div>" +
-             '<div class="gl-ai-think" id="gl-ai-think"' + (think ? "" : " hidden") + ">" +
-               '<div class="gl-ai-think-t">AI 思考过程</div>' +
-               '<div class="gl-ai-think-b">' + esc(think) + "</div>" +
-             "</div>" +
            "</div>";
+  }
+
+  /* 提前结束当前流：已吐出的内容存进缓存，并让旧回调失效。
+     切换指标或切换分页会重建 DOM，必须先调用它——否则旧回调继续往
+     已被换掉的节点里写，前端看起来就是「吐了一半卡住了」。 */
+  function glAiStop() {
+    if (!glAiBusy || !glAiBuf) return;
+    glAiToken++;
+    glAiBusy = false;
+    if (glAiBuf.acc) {
+      glAi[glAiBuf.key] = {
+        status: "done",
+        text: String(glAiBuf.acc).replace(/^[\s　]+/, ""),
+        think: glAiBuf.think,
+        model: glAiBuf.model,
+      };
+    }
+    glAiBuf = null;
   }
 
   /* 点按钮：POST /api/explain，边收边往 #gl-ai-out 里追加，实现吐字效果。 */
@@ -902,6 +938,20 @@
         if (gm) { renderGlossary(gm.dataset.gm); return; }
         var gk = t.closest("[data-gk]");
         if (gk) { renderGlossary(gk.dataset.gk); return; }
+        var tab = t.closest(".gl-tab[data-glt]");
+        if (tab) {
+          var v = tab.dataset.glt;
+          if (v !== glTab) {
+            glTab = v;
+            if (glAiBusy) glAiStop(); // 别让旧流写进即将被换掉的节点
+            renderGlossary(glCur);
+            // 切到 AI 页且这个指标还没讲过时自动跑一次，省一次点击
+            if (v === "ai" && glCur && !glAi[glCur] && glAiAvail !== false && !glAiBusy) {
+              runAiExplain(glCur);
+            }
+          }
+          return;
+        }
         var ab = t.closest(".gl-ai-btn[data-ai]");
         if (ab && !ab.disabled) { runAiExplain(ab.dataset.ai); return; }
       }

@@ -95,11 +95,21 @@
     live: {},
     bench: [],
     notices: [],
-    series: {},
+    series: {},      // 官方 pins 精选指标
+    extra: {},       // 按需拉取的其它指标序列（composition / 指标库）
     lastOk: 0,
     evRun: "pro",
     dsRun: "pro",
     ok: false,
+    view: "overview",
+    tags: [],        // 全部指标名（两个 run 并集）
+    tree: null,      // 指标树
+    tagPath: "",
+    tagQuery: "",
+    tagPage: 0,
+    compRun: "pro",
+    compMode: "count",
+    comp: null,
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -191,6 +201,7 @@
           getJSON("api/notices").then(function (n) { state.notices = n.notices || []; }).catch(function () {}),
         ]);
       })
+      .then(function () { return loadTags(runs); })
       .then(function () {
         state.ok = true;
         state.lastOk = Date.now();
@@ -205,6 +216,23 @@
         setLive(false, msg);
         if (!state.ok) render();
       });
+  }
+
+  /* 全部指标名：两个 run 取并集。只在首次拉取，之后靠轮询增量无关
+     —— 这列表有 2000 多项，每轮都拉太浪费。 */
+  function loadTags(runs) {
+    if (state.tagsLoaded) return Promise.resolve();
+    return Promise.all(runs.map(function (k) {
+      return getJSON("api/tags?run=" + k).then(function (j) { return j.tags || []; }).catch(function () { return []; });
+    })).then(function (arr) {
+      var set = {};
+      arr.forEach(function (a) { a.forEach(function (t) { set[t] = 1; }); });
+      state.tags = Object.keys(set).sort();
+      state.tree = buildTree(state.tags);
+      state.tagsLoaded = true;
+      var el = $("tag-count");
+      if (el) el.textContent = int(state.tags.length) + " 项";
+    });
   }
 
   function setLive(ok, msg) {
@@ -309,6 +337,24 @@
     });
   }
 
+  /* 训练批大小 × 每条 prompt 的采样数：n = 本步训练样本数 ÷ 批内 prompt 数 */
+  function batchN(tot) {
+    var n = tot.trained_step, p = tot.prompts_per_step;
+    if (!n || !p) return "--";
+    var r = n / p;
+    if (Math.abs(r - Math.round(r)) < 1e-6) return int(p) + ' <small>× ' + Math.round(r) + " 采样</small>";
+    return int(p) + ' <small>prompts</small>';
+  }
+  /* 相对首个训练步的成绩变化，看的是长期趋势而非单步抖动 */
+  function sinceFirst(hl) {
+    if (hl.last == null || hl.first == null) return "--";
+    var d = hl.last - hl.first;
+    var cls = d >= 0 ? "up" : "down";
+    var txt = (d >= 0 ? "▲ +" : "▼ ") + d.toFixed(4);
+    return '<span class="' + cls + '">' + txt + "</span>" +
+           '<small>自 step ' + (hl.first_step != null ? hl.first_step : 1) + "</small>";
+  }
+
   function renderRuns() {
     var runs = (state.meta && state.meta.runs) || [];
     var host = $("runs");
@@ -355,7 +401,9 @@
           cell("累计 tokens", big(tot.tokens_cum)) +
           cell("已训练样本", int(tot.trained_cum)) +
           cell("沙箱调用", big(tot.sandboxes_cum)) +
+          cell("训练批 × n", batchN(tot)) +
           cell("prompts/步", int(tot.prompts_per_step)) +
+          cell("vs 首步", sinceFirst(hl)) +
           cell("重启次数", tot.restarts != null ? tot.restarts : "--") +
           cell("花费速率", money((cost.rate_per_s || 0) * 3600) + "<small>/h</small>") +
           cell("累计花费", money(cost.so_far)) +
@@ -562,6 +610,8 @@
     renderEvents();
     renderDs();
     renderMetrics();
+    renderComposition();
+    renderClocks();
     $("updated").textContent = "更新 " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
     if (m.stream_start) {
       var d = new Date(m.stream_start * 1000);
@@ -574,6 +624,551 @@
       try { window.MTLNarrator.update(state); } catch (e) {}
     }
   }
+
+  /* ---------------- 多时区时钟 ---------------- */
+  var ZONES = [
+    ["北京", "Asia/Shanghai"],
+    ["洛杉矶", "America/Los_Angeles"],
+    ["纽约", "America/New_York"],
+    ["伦敦", "Europe/London"],
+  ];
+  var ZONE_FMT = null;
+  function zoneFmt() {
+    if (!ZONE_FMT) {
+      ZONE_FMT = ZONES.map(function (z) {
+        return new Intl.DateTimeFormat("zh-CN", {
+          timeZone: z[1], hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+        });
+      });
+    }
+    return ZONE_FMT;
+  }
+  function totalCost() {
+    var total = 0, any = false;
+    ((state.meta && state.meta.runs) || []).forEach(function (r) {
+      var s = state.status[r.key];
+      if (!s || !s.cost || !s.cost.rate_per_s) return;
+      any = true;
+      total += s.run && s.run.mode === "ended"
+        ? s.cost.so_far
+        : s.cost.rate_per_s * Math.max(0, Date.now() / 1000 - s.run.start);
+    });
+    return any ? total : null;
+  }
+  function renderClocks() {
+    var host = $("clocks");
+    if (!host) return;
+    var cost = totalCost();
+    var fmt = zoneFmt(), now = new Date();
+    host.innerHTML =
+      '<div class="clk clk-cost"><span class="k">总花费</span><span class="v">' +
+        (cost == null ? "--" : "$" + int(Math.floor(cost))) + "</span></div>" +
+      ZONES.map(function (z, i) {
+        return '<div class="clk"><span class="k">' + z[0] + '</span><span class="v mono">' +
+               fmt[i].format(now) + "</span></div>";
+      }).join("");
+  }
+
+  /* ---------------- 视图路由 ---------------- */
+  var VIEWS = ["overview", "metrics", "about"];
+  function parseHash() {
+    var v = String(location.hash || "").replace(/^#/, "").split("/")[0];
+    return VIEWS.indexOf(v) >= 0 ? v : "overview";
+  }
+  function applyView(v, skipHash) {
+    v = VIEWS.indexOf(v) >= 0 ? v : "overview";
+    state.view = v;
+    VIEWS.forEach(function (name) {
+      var el = $("view-" + name);
+      if (el) el.hidden = name !== v;
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("#tabs a"), function (a) {
+      a.classList.toggle("is-on", a.dataset.view === v);
+    });
+    if (!skipHash && parseHash() !== v) location.hash = "#" + v;
+    if (v === "metrics") { renderTreeNav(); renderTreeMain(); }
+    if (v === "about") renderAbout();
+  }
+
+  function renderAbout() {
+    var m = state.meta || {}, host = $("about-body");
+    if (!host) return;
+    var src = (m.social && m.social.url) || "https://x.com/XiaomiMiMo";
+    var handle = (m.social && m.social.handle) || "@XiaomiMiMo";
+    var upstream = (m.about || []).map(function (t) { return "<p>" + esc(t) + "</p>"; }).join("");
+    host.innerHTML =
+      "<p>这是一个<strong>本地运行</strong>的看板，数据直接代理小米官方公开接口 " +
+      '<a class="link" href="https://mimo.xiaomi.com/rl/" target="_blank" rel="noopener">mimo.xiaomi.com/rl</a>，' +
+      "不经过任何第三方服务器，也不存储除了本地 SQLite 之外的东西。</p>" +
+      "<p>右侧的「实时解说」是本地生成的教学文本：规则引擎先给出结构化解说，" +
+      "如果你配置了本地大模型（OpenAI 兼容接口），它会进一步改写成更有信息量的版本。两者在界面上有明确标记。</p>" +
+      "<h3>怎么看这个面板</h3><ul>" +
+      "<li><b>step</b>：一整轮训练循环，先让模型做题（rollout），再拿答案更新参数（training），一步约 2～3 小时。</li>" +
+      "<li><b>avg@n</b>：本轮的平均得分，0～1，越高越强。这是最该盯的数字。</li>" +
+      "<li><b>零分率 / 满分率</b>：16 次尝试全错或全对的题占比。这两类题没有梯度信号，练了也白烧钱。</li>" +
+      "<li><b>指标库</b>页可以浏览 trainer 上报的全部指标，共 " + int(state.tags.length) + " 项。</li>" +
+      "</ul>" +
+      (upstream ? "<h3>官方说明</h3>" + upstream : "") +
+      "<p class='dim'>官方账号 " + '<a class="link" href="' + esc(src) + '" target="_blank" rel="noopener">' +
+      esc(handle) + "</a> · " + esc(m.footer_note || "") + "</p>";
+  }
+
+  /* ---------------- 通用指标序列拉取（带缓存） ---------------- */
+  var extraInflight = {};
+  function fetchSeries(run, tags) {
+    // 已缓存的先剔除，只拉缺的；同一 run+tags 组合不会重复发请求
+    var need = tags.filter(function (t) { return !(state.extra[run] && state.extra[run][t]); });
+    if (!need.length) return Promise.resolve(state.extra[run]);
+    var q = encodeURIComponent(tags.join(","));
+    var ck = run + "|" + q;
+    if (extraInflight[ck]) return extraInflight[ck];
+    var p = getJSON("api/series?run=" + run + "&tags=" + q).then(function (s) {
+      var bucket = state.extra[run] || (state.extra[run] = {});
+      Object.keys(s.series || {}).forEach(function (k) { bucket[k] = s.series[k]; });
+      if (s.steps) bucket.__steps = s.steps;
+      delete extraInflight[ck];
+      return bucket;
+    }).catch(function (e) {
+      delete extraInflight[ck];
+      throw e;
+    });
+    extraInflight[ck] = p;
+    return p;
+  }
+  function seriesAt(run, tag) {
+    var b = state.extra[run];
+    return (b && b[tag]) || null;
+  }
+  function stepsOf(run) {
+    var b = state.extra[run];
+    if (b && b.__steps) return b.__steps;
+    var s = state.series[run];
+    return (s && s.steps) || [];
+  }
+
+  /* ---------------- 指标树 ---------------- */
+  function buildTree(tags) {
+    var root = { name: "", path: "", children: {}, leaves: [], total: 0 };
+    tags.forEach(function (t) {
+      var parts = String(t).split("/");
+      var node = root;
+      for (var i = 0; i < parts.length - 1; i++) {
+        var seg = parts[i], cp = node.path ? node.path + "/" + seg : seg;
+        if (!node.children[seg]) node.children[seg] = { name: seg, path: cp, children: {}, leaves: [], total: 0 };
+        node = node.children[seg];
+        node.total++;
+      }
+      node.leaves.push(t);
+      root.total++;
+    });
+    return root;
+  }
+  function nodeAt(root, path) {
+    if (!path) return root;
+    var parts = path.split("/"), node = root;
+    for (var i = 0; i < parts.length; i++) {
+      node = node.children[parts[i]];
+      if (!node) return null;
+    }
+    return node;
+  }
+  function sortedChildren(node) {
+    return Object.keys(node.children).map(function (k) { return node.children[k]; })
+      .sort(function (a, b) { return a.name.localeCompare(b.name); });
+  }
+
+  var TAG_PAGE = 40;
+  var expanded = {};   // 展开的目录路径
+
+  function renderTreeNav() {
+    var host = $("tree");
+    if (!host) return;
+    if (!state.tree) { host.innerHTML = '<div class="empty">指标列表加载中…</div>'; return; }
+    // 首次进入时把当前路径的祖先全部展开
+    var parts = state.tagPath ? state.tagPath.split("/") : [];
+    for (var i = 0; i < parts.length; i++) expanded[parts.slice(0, i + 1).join("/")] = true;
+
+    function build(node, depth) {
+      var out = "";
+      sortedChildren(node).forEach(function (c) {
+        var has = Object.keys(c.children).length > 0;
+        var open = !!expanded[c.path];
+        out += '<div class="tree-node' + (state.tagPath === c.path ? " is-on" : "") + '" data-p="' + esc(c.path) +
+               '" style="padding-left:' + (8 + depth * 12) + 'px">' +
+               '<span class="tw">' + (has ? (open ? "▾" : "▸") : "") + "</span>" +
+               '<span class="nm">' + esc(c.name) + "</span>" +
+               '<span class="cnt">' + c.total + "</span></div>";
+        if (has && open) out += build(c, depth + 1);
+      });
+      return out;
+    }
+    host.innerHTML = '<div class="tree-node' + (state.tagPath === "" ? " is-on" : "") + '" data-p="" style="padding-left:8px">' +
+                     '<span class="tw">▸</span><span class="nm">全部指标</span><span class="cnt">' +
+                     state.tree.total + "</span></div>" + build(state.tree, 1);
+
+    Array.prototype.forEach.call(host.querySelectorAll(".tree-node"), function (row) {
+      row.addEventListener("click", function () {
+        var p = row.dataset.p;
+        if (expanded[p]) delete expanded[p]; else expanded[p] = true;
+        state.tagPath = p;
+        state.tagPage = 0;
+        renderTreeNav();
+        renderTreeMain();
+      });
+    });
+  }
+
+  function matchedTags() {
+    if (!state.tags.length) return { leaves: [], folders: [], title: "" };
+    if (state.tagQuery) {
+      var m = state.tagQuery.match(/^\/(.+)\/([a-z]*)$/), test = null;
+      if (m) { try { test = new RegExp(m[1], m[2]); } catch (e) { test = null; } }
+      var q = state.tagQuery.toLowerCase();
+      var leaves = state.tags.filter(function (t) {
+        return test ? test.test(t) : t.toLowerCase().indexOf(q) >= 0;
+      });
+      return { leaves: leaves, folders: [], title: '<span class="cur">' + leaves.length + ' 项匹配</span> <span class="dim">' + esc(state.tagQuery) + "</span>" };
+    }
+    var node = nodeAt(state.tree, state.tagPath);
+    if (!node) return { leaves: [], folders: [], title: '<span class="dim">路径不存在：' + esc(state.tagPath) + "</span>" };
+    var parts = state.tagPath ? state.tagPath.split("/") : [];
+    var crumbs = '<a data-p="">全部</a>' + parts.map(function (p, i) {
+      return '<span class="sepc">/</span>' + (i === parts.length - 1
+        ? '<span class="cur">' + esc(p) + "</span>"
+        : '<a data-p="' + esc(parts.slice(0, i + 1).join("/")) + '">' + esc(p) + "</a>");
+    }).join("");
+    return {
+      leaves: node.leaves.slice().sort(),
+      folders: sortedChildren(node),
+      title: crumbs + '<span class="dim">&nbsp; ' + node.total + " 项</span>",
+    };
+  }
+
+  function renderTreeMain() {
+    var crumbs = $("crumbs"), folders = $("folders"), grid = $("tree-grid"), more = $("tree-more");
+    if (!grid) return;
+    var res = matchedTags();
+    crumbs.innerHTML = res.title;
+    Array.prototype.forEach.call(crumbs.querySelectorAll("a[data-p]"), function (a) {
+      a.addEventListener("click", function () {
+        state.tagPath = a.dataset.p; state.tagPage = 0;
+        renderTreeNav(); renderTreeMain();
+      });
+    });
+    folders.innerHTML = res.folders.map(function (f) {
+      return '<button class="folder" data-p="' + esc(f.path) + '">' + esc(f.name) +
+             '<span class="cnt">' + f.total + "</span></button>";
+    }).join("");
+    Array.prototype.forEach.call(folders.querySelectorAll(".folder"), function (b) {
+      b.addEventListener("click", function () {
+        state.tagPath = b.dataset.p; state.tagPage = 0;
+        renderTreeNav(); renderTreeMain();
+      });
+    });
+
+    var show = res.leaves.slice(0, state.tagPage || TAG_PAGE);
+    more.innerHTML = "";
+    if (!show.length) {
+      // 根路径下全是目录、没有直接挂在根上的指标，给出引导而不是留白
+      grid.innerHTML = res.folders.length
+        ? '<div class="empty">从上方目录或左侧树里选一个分类，这里会列出该分类下的指标曲线。</div>'
+        : '<div class="empty">这个路径下没有指标</div>';
+      return;
+    }
+    grid.innerHTML = '<div class="empty">正在加载 ' + show.length + " 项指标…</div>";
+    renderTagCards(grid, show);
+    if (res.leaves.length > show.length) {
+      more.innerHTML = '<button class="more-btn" id="tree-more-btn">再显示 ' +
+        Math.min(TAG_PAGE, res.leaves.length - show.length) + ' 项<span class="dim">（还剩 ' +
+        (res.leaves.length - show.length) + "）</span></button>";
+      $("tree-more-btn").addEventListener("click", function () { state.tagPage += TAG_PAGE; renderTreeMain(); });
+    }
+  }
+
+  /* 批量拉一组指标的序列并渲染卡片：一次 series 请求搞定整页 */
+  function renderTagCards(grid, tags) {
+    var runs = (state.meta && state.meta.runs) || [];
+    if (!runs.length) { grid.innerHTML = '<div class="empty">尚未加载</div>'; return; }
+    var run = state.compRun && state.meta.runs.some(function (r) { return r.key === state.compRun; })
+      ? state.compRun : runs[0].key;
+    fetchSeries(run, tags).then(function (bucket) {
+      var steps = stepsOf(run);
+      var items = tags.filter(function (t) {
+        var a = bucket[t];
+        return Array.isArray(a) && a.some(function (v) { return v != null && !isNaN(v); });
+      });
+      if (!items.length) { grid.innerHTML = '<div class="empty">这些指标当前没有数据</div>'; return; }
+      grid.innerHTML = items.map(function (t, i) {
+        var arr = bucket[t] || [];
+        var pts = [], last = null, prev = null;
+        for (var k = 0; k < arr.length; k++) {
+          var v = arr[k];
+          if (v == null || typeof v !== "number" || isNaN(v)) continue;
+          pts.push({ x: steps[k] != null ? steps[k] : k + 1, y: v });
+        }
+        if (pts.length) { last = pts[pts.length - 1].y; prev = pts.length > 1 ? pts[pts.length - 2].y : null; }
+        var d = prev == null ? null : last - prev;
+        return '<div class="metric-card">' +
+               '<div class="m-head"><span class="m-zh mono">' + esc(t) + "</span></div>" +
+               '<div class="m-vals"><div class="m-val"><span class="m-num">' + esc(fmtTag(t, last)) + "</span>" +
+                 (d == null ? "" : '<span class="m-delta ' + (d > 0 ? "up" : d < 0 ? "down" : "") + '">' +
+                   (d > 0 ? "+" : "") + esc(fmtTag(t, d)) + "</span>") + "</div></div>" +
+               '<div class="m-chart" data-ti="' + i + '"></div>' +
+               '<div class="m-desc">' + esc(descOf(t)) + "</div>" +
+               "</div>";
+      }).join("");
+      var host = grid;
+      Array.prototype.forEach.call(host.querySelectorAll(".m-chart"), function (el) {
+        var t = items[+el.dataset.ti];
+        var arr = bucket[t] || [], pts = [];
+        for (var k = 0; k < arr.length; k++) {
+          var v = arr[k];
+          if (v == null || typeof v !== "number" || isNaN(v)) continue;
+          pts.push({ x: steps[k] != null ? steps[k] : k + 1, y: v });
+        }
+        lineChart(el, [{ name: t, color: "var(--accent)", pts: pts }], {
+          minimal: true, width: 340, height: 110,
+          tipFmt: function (v) { return fmtTag(t, v); },
+        });
+      });
+    }).catch(function () {
+      grid.innerHTML = '<div class="empty">指标序列加载失败</div>';
+    });
+  }
+
+  /* 堆叠面积图：mode=count 画绝对值，mode=share 画占比（0~1） */
+  function stackedChart(host, steps, series, opt) {
+    opt = opt || {};
+    var W = opt.width || 640, H = opt.height || 220;
+    var padL = 52, padR = 14, padT = 12, padB = 26;
+    if (opt.minimal) { padL = 34; padB = 20; }
+    var n = steps.length;
+    if (!n) { host.innerHTML = '<div class="empty">没有数据</div>'; return; }
+
+    // 逐层累加得到堆叠上沿
+    var acc = new Array(n).fill(0);
+    var stacks = series.map(function (s) {
+      return { s: s, base: acc.slice(), top: acc.map(function (v, i) { return (acc[i] += (s.values[i] || 0)); }) };
+    });
+    // share 模式：按每步总和归一化，画成 100% 堆叠
+    if (opt.mode === "share") {
+      stacks = [];
+      acc = new Array(n).fill(0);
+      series.forEach(function (s) {
+        var base = acc.slice();
+        var top = acc.map(function (v, i) {
+          var tot = series.reduce(function (a, o) { return a + (o.values[i] || 0); }, 0) || 1;
+          return (acc[i] += (s.values[i] || 0) / tot);
+        });
+        stacks.push({ s: s, base: base, top: top });
+      });
+    }
+
+    var yMax = 0;
+    stacks.forEach(function (st) { st.top.forEach(function (v) { if (v > yMax) yMax = v; }); });
+    if (opt.mode === "share") yMax = 1;
+    if (yMax <= 0) yMax = 1;
+    var xMin = steps[0], xMax = steps[n - 1];
+    if (xMax === xMin) { xMax = xMin + 1; }
+    var sx = function (v) { return padL + ((v - xMin) / (xMax - xMin)) * (W - padL - padR); };
+    var sy = function (v) { return padT + (1 - v / yMax) * (H - padT - padB); };
+    var fmtY = opt.mode === "share"
+      ? function (v) { return (v * 100).toFixed(0) + "%"; }
+      : (opt.yFmt || function (v) { return int(v); });
+
+    var svg = '<svg viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" class="chart-svg">';
+    var nGrid = 4;
+    for (var i = 0; i <= nGrid; i++) {
+      var v = (yMax * i) / nGrid, y = sy(v);
+      svg += '<line class="grid-line" x1="' + padL + '" y1="' + y.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + y.toFixed(1) + '"/>';
+      svg += '<text class="axis-text" x="' + (padL - 6) + '" y="' + (y + 3.5).toFixed(1) + '" text-anchor="end">' + esc(fmtY(v)) + "</text>";
+    }
+    var ticks = Math.min(6, Math.max(2, n));
+    for (var t = 0; t <= ticks; t++) {
+      var idx = Math.round(((n - 1) * t) / ticks), xv = steps[idx];
+      svg += '<text class="axis-text" x="' + sx(xv).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle">s' + xv + "</text>";
+    }
+    stacks.forEach(function (st) {
+      var up = st.top.map(function (v, i) { return sx(steps[i]).toFixed(1) + " " + sy(v).toFixed(1); });
+      var dn = st.base.map(function (v, i) { return sx(steps[i]).toFixed(1) + " " + sy(v).toFixed(1); }).reverse();
+      var d = "M" + up.join(" L") + " L" + dn.join(" L") + " Z";
+      svg += '<path d="' + d + '" fill="' + st.s.color + '" fill-opacity="0.75" stroke="' + st.s.color +
+             '" stroke-width="0.8"><title>' + esc(st.s.label) + "</title></path>";
+    });
+    svg += "</svg>";
+    host.innerHTML = svg;
+  }
+
+  /* ---------------- batch composition ----------------
+     每步真正进入训练的 prompt 来自哪些数据集类别。
+     单个数据源的存量满足 held(t) = held(t-1) + accepted(t) - trained(t)，
+     于是 trained(t) ≈ held(t-1) + accepted(t) - held(t)；按类别汇总即为训练批的构成。
+     刚重启的那一步 held 是在消耗之前上报的，上式会失真，此时回退为
+     carryover + 新接受量按比例分摊。 */
+  function compSources() {
+    var cats = (state.meta && state.meta.categories) || [];
+    var re = /^dynsam\/([^/]+)\/([^/]+)\/num_accepted\/step$/;
+    var out = [];
+    state.tags.forEach(function (t) {
+      var m = re.exec(t);
+      if (!m) return;
+      if (cats.length && cats.indexOf(m[1]) < 0) return;
+      out.push({ cat: m[1], ds: m[2], key: m[1] + "/" + m[2] });
+    });
+    return out;
+  }
+
+  function renderComposition() {
+    var panel = $("comp-panel");
+    if (!panel) return;
+    var run = state.compRun;
+    var items = compSources();
+    if (!items.length) { panel.hidden = true; return; }
+    panel.hidden = false;
+
+    var cats = (state.meta && state.meta.categories) || [];
+    var tags = [];
+    items.forEach(function (it) {
+      ["step", "held", "carryover"].forEach(function (k) {
+        tags.push("dynsam/" + it.key + "/num_accepted/" + k);
+      });
+    });
+    tags.push("dynsam/num_target");
+
+    fetchSeries(run, tags).then(function (bucket) {
+      var steps = stepsOf(run);
+      var n = steps.length;
+      if (!n) { $("comp-chart").innerHTML = '<div class="empty">暂无数据</div>'; return; }
+      var get = function (it, k) { return bucket["dynsam/" + it.key + "/num_accepted/" + k] || []; };
+      var bszSeries = bucket["dynsam/num_target"] || [];
+
+      var trained = items.map(function () { return new Array(n).fill(0); });
+      var approx = new Array(n).fill(false);
+      for (var i = 0; i < n; i++) {
+        var bsz = bszSeries[i] || 0;
+        var sum = 0;
+        var rec = items.map(function (it, k) {
+          var a = get(it, "step")[i] || 0, h = get(it, "held")[i] || 0;
+          var hp = i ? (get(it, "held")[i - 1] || 0) : null;
+          var v = hp == null ? null : Math.max(0, hp + a - h);
+          if (v != null) sum += v;
+          return v;
+        });
+        // 与官方 batch size 对得上才采信推导值，否则说明是刚重启的那一步
+        if (i > 0 && bsz && Math.abs(sum - bsz) <= 0.05 * bsz) {
+          rec.forEach(function (v, k) { trained[k][i] = v; });
+        } else {
+          approx[i] = true;
+          var carry = items.map(function (it) { return get(it, "carryover")[i] || 0; });
+          var acc = items.map(function (it) { return get(it, "step")[i] || 0; });
+          var carrySum = carry.reduce(function (a, b) { return a + b; }, 0);
+          var fresh = Math.max(0, bsz - carrySum);
+          var accSum = acc.reduce(function (a, b) { return a + b; }, 0) || 1;
+          items.forEach(function (it, k) { trained[k][i] = carry[k] + (acc[k] * fresh) / accSum; });
+        }
+      }
+
+      var pal = ["#5b9dff", "#22c55e", "#ffab3d", "#a855f7", "#ef4444", "#06b6d4"];
+      var series = cats.map(function (g, gi) {
+        return {
+          key: g, label: CAT_LABEL[g] || g, color: pal[gi % pal.length],
+          values: Array.from({ length: n }, function (_, i) {
+            return items.reduce(function (a, it, k) { return a + (it.cat === g ? trained[k][i] : 0); }, 0);
+          }),
+        };
+      }).filter(function (s) { return s.values.some(function (v) { return v > 0; }); });
+
+      stackedChart($("comp-chart"), steps, series, {
+        mode: state.compMode, height: 200,
+        yFmt: function (v) { return int(v); },
+      });
+
+      var last = n - 1, prev = n - 2;
+      var totAt = function (i) { return series.reduce(function (a, s) { return a + (s.values[i] || 0); }, 0); };
+      var total = totAt(last), prevTotal = prev >= 0 ? totAt(prev) : 0;
+      var bsz = bszSeries[last] || 0;
+
+      $("comp-table").innerHTML =
+        '<div class="comp-t-head"><b>step ' + steps[last] + "</b><span class=\"dim\">" +
+        (approx[last] ? "≈ " : "") + int(total) + " prompts" + (bsz ? " · 训练批 " + int(bsz) : "") + "</span></div>" +
+        '<table class="tbl"><thead><tr><th>类别</th><th>数据源</th><th>prompts</th><th>占比</th><th>占比变化</th></tr></thead><tbody>' +
+        series.map(function (s, gi) {
+          var v = s.values[last] || 0, sh = total ? v / total : 0;
+          var ps = prevTotal ? (s.values[prev] || 0) / prevTotal : null;
+          var d = ps == null ? null : sh - ps;
+          var cnt = items.filter(function (it) { return (CAT_LABEL[it.cat] || it.cat) === s.label; }).length;
+          return "<tr><td><i class=\"swatch\" style=\"background:" + s.color + '\"></i>' + esc(s.label) + "</td>" +
+                 '<td class="dim">' + cnt + "</td><td>" + int(v) + "</td><td>" + (sh * 100).toFixed(1) + "%</td>" +
+                 '<td class="' + (d == null ? "dim" : "") + '">' + (d == null ? "—" :
+                   (d > 0 ? "▲" : d < 0 ? "▼" : "") + Math.abs(d * 100).toFixed(1) + " pt") + "</td></tr>";
+        }).join("") +
+        '<tr class="total"><td>合计</td><td class="dim">' + items.length + "</td><td>" + int(total) +
+        "</td><td>100%</td><td></td></tr></tbody></table>" +
+        (approx.some(Boolean) ? '<div class="comp-note">≈ 标注的步发生在重启之后，此时上报的存量尚未扣除本步消耗，构成按比例估算。</div>' : "");
+    }).catch(function () {
+      $("comp-chart").innerHTML = '<div class="empty">构成数据加载失败</div>';
+    });
+  }
+
+  /* 指标库里有 2000 多个指标，靠量级猜格式会出错（比如把 7215 秒显示成 7215.990）。
+     上游在 runs.formats 里给了 [正则, 格式名] 规则，按序取第一条命中的，照搬即可。 */
+  var FMT_RULES = null;
+  function fmtRules() {
+    if (FMT_RULES) return FMT_RULES;
+    FMT_RULES = ((state.meta && state.meta.formats) || []).map(function (r) {
+      try { return { re: new RegExp(r[0]), kind: r[1] }; } catch (e) { return null; }
+    }).filter(Boolean);
+    return FMT_RULES;
+  }
+  function fmtKindOf(tag) {
+    var rules = fmtRules();
+    for (var i = 0; i < rules.length; i++) if (rules[i].re.test(tag)) return rules[i].kind;
+    return null;
+  }
+  function fmtByKind(v, kind) {
+    if (v == null || isNaN(v)) return "--";
+    switch (kind) {
+      case "duration": return dur(v);
+      case "compact": return big(v);
+      case "gb": return v.toFixed(1) + " GB";
+      case "sci": return v === 0 ? "0" : v.toExponential(1);
+      case "ratio": return v.toFixed(4);
+      case "pct": return (v * 100).toFixed(1) + "%";
+      case "int": return int(v);
+      default: return fmtAuto(v);
+    }
+  }
+  /* 指标库卡片用：优先按上游规则，没有规则再按量级自适应 */
+  function fmtTag(tag, v) {
+    var k = fmtKindOf(tag);
+    if (k) return fmtByKind(v, k);
+    if (METRIC_BY_KEY[tag]) return fmtMetric(v, METRIC_BY_KEY[tag].kind);
+    return fmtAuto(v);
+  }
+
+  /* 没有中文映射时的兜底格式化：按量级自适应 */
+  function fmtAuto(v) {
+    if (v == null || isNaN(v)) return "--";
+    var a = Math.abs(v);
+    if (a !== 0 && a < 0.001) return v.toExponential(1);
+    if (a >= 1e9) return big(v);
+    if (a >= 1e6) return big(v);
+    if (a >= 1e4) return int(v);
+    if (a >= 1) return v.toFixed(3);
+    return v.toFixed(4);
+  }
+  function descOf(tag) {
+    var d = state.meta && state.meta.descriptions;
+    if (d && d[tag]) return d[tag];
+    var zh = TAG_ZH[tag];
+    if (zh) return zh;
+    var parts = String(tag).split("/");
+    return "路径 " + parts.slice(0, -1).join("/") + " 下的 " + parts[parts.length - 1];
+  }
+  var TAG_ZH = {};   // 关键路径的中文说明（覆盖官方 descriptions 没有的）
+  (function () {
+    METRIC_DEFS.forEach(function (d) { TAG_ZH[d.k] = d.zh + "：" + d.desc; });
+  })();
 
   /* ---------------- interactions ---------------- */
   function bindSeg(id, get, set) {
@@ -589,6 +1184,43 @@
   }
 
   /* ---------------- boot ---------------- */
+  function initNav() {
+    document.getElementById("tabs").addEventListener("click", function (e) {
+      var a = e.target.closest("a[data-view]");
+      if (!a) return;
+      e.preventDefault();
+      applyView(a.dataset.view);
+    });
+    window.addEventListener("hashchange", function () { applyView(parseHash(), true); });
+
+    // composition：切换 run 与「数量/占比」两种画法
+    bindSeg("comp-run-switch", function () { return state.compRun; }, function (v) { state.compRun = v; });
+    var modeBox = $("comp-mode-switch");
+    if (modeBox) {
+      modeBox.addEventListener("click", function (e) {
+        var btn = e.target.closest(".seg-btn");
+        if (!btn) return;
+        Array.prototype.forEach.call(modeBox.querySelectorAll(".seg-btn"), function (b) { b.classList.remove("is-on"); });
+        btn.classList.add("is-on");
+        state.compMode = btn.dataset.mode;
+        renderComposition();
+      });
+    }
+
+    // 指标库搜索：防抖，支持子串与 /正则/
+    var box = $("tag-search"), timer = null;
+    if (box) {
+      box.addEventListener("input", function () {
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          state.tagQuery = box.value.trim();
+          state.tagPage = 0;
+          renderTreeMain();
+        }, 200);
+      });
+    }
+  }
+
   function initTheme() {
     var saved = localStorage.getItem("mtl-theme");
     if (saved) document.documentElement.dataset.theme = saved;
@@ -602,8 +1234,12 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     initTheme();
+    initNav();
     bindSeg("run-switch", function () { return state.evRun; }, function (v) { state.evRun = v; });
     bindSeg("ds-run-switch", function () { return state.dsRun; }, function (v) { state.dsRun = v; });
+    renderClocks();
+    setInterval(renderClocks, 1000);
+    applyView(parseHash(), true);
     loadAll();
     setInterval(loadAll, REFRESH_MS);
   });

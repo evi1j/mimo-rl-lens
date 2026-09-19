@@ -385,6 +385,103 @@ body::before {
   overflow: hidden;
 }
 
+/* ---------- v1.2 新增：导航 / 时钟 / 构成 / 指标库 ---------- */
+.topnav {
+  position: sticky; top: 0; z-index: 30;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border-soft);
+}
+.topnav-inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 46px; }
+.tabs { display: flex; gap: 4px; }
+.tabs a {
+  padding: 6px 14px; border-radius: 8px; font-size: 13.5px; font-weight: 500;
+  color: var(--dim); text-decoration: none; transition: background .15s, color .15s;
+}
+.tabs a:hover { color: var(--text); background: var(--panel-2); }
+.tabs a.is-on { color: var(--text); background: var(--panel-2); font-weight: 600; }
+
+.clocks { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.clk { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
+.clk .k { font-size: 10.5px; color: var(--dim-2); }
+.clk .v { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.clk-cost .v { color: var(--text); font-weight: 600; }
+
+/* batch composition */
+.comp-ctl { display: flex; gap: 8px; flex-wrap: wrap; }
+.comp-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; }
+.comp-chart { min-height: 200px; }
+.comp-chart svg { width: 100%; height: 200px; display: block; }
+.comp-t-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 13px; }
+.comp-note { margin-top: 8px; font-size: 11.5px; color: var(--dim-2); line-height: 1.5; }
+
+.tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tbl th {
+  text-align: right; font-weight: 500; color: var(--dim-2); font-size: 11px;
+  padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.tbl td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--border-soft); font-variant-numeric: tabular-nums; }
+.tbl th:first-child, .tbl td:first-child { text-align: left; }
+.tbl td:first-child { display: flex; align-items: center; gap: 6px; }
+.tbl .dim { color: var(--dim-2); }
+.tbl tr.total td { font-weight: 600; border-top: 1px solid var(--border); border-bottom: none; }
+.tbl .up { color: var(--up); }
+.tbl .down { color: var(--down); }
+
+/* 指标库 */
+.metrics-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; align-items: start; }
+.tree {
+  max-height: 640px; overflow-y: auto; border: 1px solid var(--border);
+  border-radius: 10px; padding: 6px 0; background: var(--panel-2);
+}
+.tree-node {
+  display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px;
+  font-size: 12.5px; color: var(--dim); cursor: pointer; user-select: none;
+}
+.tree-node:hover { background: var(--panel); color: var(--text); }
+.tree-node.is-on { background: var(--panel); color: var(--text); font-weight: 600; }
+.tree-node .tw { width: 10px; font-size: 9px; color: var(--dim-2); flex: none; }
+.tree-node .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-node .cnt { font-size: 10.5px; color: var(--dim-2); font-variant-numeric: tabular-nums; }
+
+.tree-main { min-width: 0; }
+.crumbs { font-size: 12.5px; margin-bottom: 10px; line-height: 1.8; }
+.crumbs a { color: var(--accent); text-decoration: none; cursor: pointer; }
+.crumbs a:hover { text-decoration: underline; }
+.crumbs .sepc { color: var(--dim-2); margin: 0 2px; }
+.crumbs .cur { font-weight: 600; }
+.crumbs .dim, .crumbs .dim { color: var(--dim-2); font-weight: 400; }
+.folders { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.folder {
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--dim);
+  border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+.folder:hover { color: var(--text); border-color: var(--accent); }
+.folder .cnt { margin-left: 5px; color: var(--dim-2); font-size: 10.5px; }
+.tag-search {
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  border-radius: 8px; padding: 6px 10px; font-size: 12.5px; width: 240px; max-width: 40vw;
+}
+.more-btn {
+  width: 100%; margin-top: 12px; padding: 9px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--dim); font-size: 12.5px;
+}
+.more-btn:hover { color: var(--text); border-color: var(--accent); }
+
+.prose-panel { padding-bottom: 18px; }
+.prose { font-size: 13.5px; line-height: 1.75; color: var(--dim); max-width: 780px; }
+.prose p { margin: 0 0 12px; }
+.prose h3 { font-size: 14px; color: var(--text); margin: 18px 0 8px; }
+.prose ul { margin: 0 0 12px; padding-left: 20px; }
+.prose li { margin-bottom: 5px; }
+.prose strong { color: var(--text); }
+.prose .link, .link { color: var(--accent); text-decoration: none; }
+.prose .link:hover, .link:hover { text-decoration: underline; }
+
+/* 堆叠图与折线图共用坐标轴样式（comp-chart 不在 .chart 内，需单独声明） */
+svg .grid-line { stroke: var(--grid); stroke-width: 1; }
+svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace, Menlo, monospace; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .layout { grid-template-columns: 1fr; }
@@ -403,4 +500,8 @@ body::before {
   #updated { display: none; }
   .ds-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .metric-grid { grid-template-columns: 1fr; }
+  .comp-layout { grid-template-columns: 1fr; }
+  .metrics-layout { grid-template-columns: 1fr; }
+  .tree { max-height: 260px; }
+  .clocks .clk:not(.clk-cost) { display: none; }
 }

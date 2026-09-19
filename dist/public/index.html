@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MiMo-V2.6 · RL 实时训练看板</title>
 <meta name="description" content="mimo-v2.6-pro / flash 强化学习训练实时指标面板，数据直连小米官方 trainer 日志。">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 
@@ -29,8 +29,21 @@
   </div>
 </header>
 
+<nav class="topnav">
+  <div class="wrap topnav-inner">
+    <div class="tabs" id="tabs">
+      <a href="#overview" data-view="overview" class="is-on">总览</a>
+      <a href="#metrics" data-view="metrics">指标库</a>
+      <a href="#about" data-view="about">关于</a>
+    </div>
+    <div class="clocks" id="clocks"></div>
+  </div>
+</nav>
+
 <div class="wrap layout">
 <main class="main-col">
+
+  <section id="view-overview">
 
   <section class="runs" id="runs">
     <div class="skeleton-card"></div>
@@ -88,6 +101,29 @@
     <div class="ds-grid" id="ds-grid"></div>
   </section>
 
+  <section class="panel" id="comp-panel" hidden>
+    <div class="panel-head">
+      <div>
+        <h2>训练样本构成 <span class="mono tag">batch composition</span></h2>
+        <p class="panel-sub">每一步真正拿来训练的 prompt 来自哪些数据集类别 · 悬停看图例</p>
+      </div>
+      <div class="comp-ctl">
+        <div class="seg" id="comp-run-switch">
+          <button class="seg-btn is-on" data-run="pro">pro</button>
+          <button class="seg-btn" data-run="flash">flash</button>
+        </div>
+        <div class="seg" id="comp-mode-switch">
+          <button class="seg-btn is-on" data-mode="count">数量</button>
+          <button class="seg-btn" data-mode="share">占比</button>
+        </div>
+      </div>
+    </div>
+    <div class="comp-layout">
+      <div class="comp-chart" id="comp-chart"><div class="empty">加载中…</div></div>
+      <div class="comp-table" id="comp-table"></div>
+    </div>
+  </section>
+
   <section class="panel">
     <div class="panel-head">
       <div>
@@ -96,6 +132,36 @@
       </div>
     </div>
     <div class="metric-grid" id="metric-grid"><div class="empty">加载中…</div></div>
+  </section>
+
+  </section><!-- /view-overview -->
+
+  <section id="view-metrics" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>指标库 <span class="tag mono" id="tag-count">--</span></h2>
+          <p class="panel-sub">trainer 上报的全部指标，按路径分层浏览 · 支持子串或 /正则/ 搜索</p>
+        </div>
+        <input class="tag-search" id="tag-search" type="search" placeholder="过滤指标（子串或 /正则/）" autocomplete="off">
+      </div>
+      <div class="metrics-layout">
+        <nav class="tree" id="tree"><div class="empty">加载中…</div></nav>
+        <div class="tree-main">
+          <div class="crumbs" id="crumbs"></div>
+          <div class="folders" id="folders"></div>
+          <div class="metric-grid" id="tree-grid"></div>
+          <div id="tree-more"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-about" hidden>
+    <div class="panel prose-panel">
+      <div class="panel-head"><div><h2>关于</h2><p class="panel-sub">这个看板是什么、数据从哪来</p></div></div>
+      <div class="prose" id="about-body"></div>
+    </div>
   </section>
 
 </main>
@@ -165,7 +231,7 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="narrator.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="narrator.js?v=6"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

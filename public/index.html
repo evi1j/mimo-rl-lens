@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MiMo-V2.6 · RL 实时训练看板</title>
 <meta name="description" content="mimo-v2.6-pro / flash 强化学习训练实时指标面板，数据直连小米官方 trainer 日志。">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 
@@ -45,6 +45,12 @@
 
   <section id="view-overview">
 
+  <div class="guide-bar">
+    <span class="gb-text">第一次看这块板？不知道这些图和数字在说什么</span>
+    <button class="gb-btn" data-g="__index">打开看板导读</button>
+    <span class="gb-hint">也可以直接点任意一张指标卡片</span>
+  </div>
+
   <section class="runs" id="runs">
     <div class="skeleton-card"></div>
     <div class="skeleton-card"></div>
@@ -53,7 +59,8 @@
   <section class="panel">
     <div class="panel-head">
       <div>
-        <h2>核心指标 <span class="mono tag">dynsam/avg@n</span></h2>
+        <h2>核心指标 <span class="mono tag">dynsam/avg@n</span>
+          <button class="qbtn" data-g="headline" title="讲解这张图">?</button></h2>
         <p class="panel-sub">每个训练步的平均得分（越高越好）</p>
       </div>
       <div class="legend" id="legend-headline"></div>
@@ -64,7 +71,8 @@
   <section class="panel">
     <div class="panel-head">
       <div>
-        <h2>离线评测 <span class="tag">随训练步定期评测</span></h2>
+        <h2>离线评测 <span class="tag">随训练步定期评测</span>
+          <button class="qbtn" data-g="bench" title="讲解这块面板">?</button></h2>
         <p class="panel-sub">拿中间存档点去跑标准题库 · 与训练奖励无关，是独立的泛化检验</p>
       </div>
       <div id="bench-count" class="panel-note"></div>
@@ -74,13 +82,17 @@
 
   <div class="row">
     <section class="panel">
-      <div class="panel-head"><div><h2>官方公告</h2><p class="panel-sub">trainer 运行中断与恢复记录</p></div></div>
+      <div class="panel-head"><div><h2>官方公告
+        <button class="qbtn" data-g="notices" title="讲解这块面板">?</button></h2>
+        <p class="panel-sub">trainer 运行中断与恢复记录</p></div></div>
       <div class="list" id="notices"><div class="empty">加载中…</div></div>
     </section>
 
     <section class="panel">
       <div class="panel-head">
-        <div><h2>步事件流</h2><p class="panel-sub">step 完成 / 重启</p></div>
+        <div><h2>步事件流
+          <button class="qbtn" data-g="events" title="讲解这块面板">?</button></h2>
+          <p class="panel-sub">step 完成 / 重启</p></div>
         <div class="seg" id="run-switch">
           <button class="seg-btn is-on" data-run="pro">pro</button>
           <button class="seg-btn" data-run="flash">flash</button>
@@ -92,7 +104,9 @@
 
   <section class="panel">
     <div class="panel-head">
-      <div><h2>数据源分布</h2><p class="panel-sub">按任务类别统计的活跃数据集</p></div>
+      <div><h2>数据源分布
+        <button class="qbtn" data-g="ds" title="讲解这块面板">?</button></h2>
+        <p class="panel-sub">按任务类别统计的活跃数据集</p></div>
       <div class="seg" id="ds-run-switch">
         <button class="seg-btn is-on" data-run="pro">pro</button>
         <button class="seg-btn" data-run="flash">flash</button>
@@ -104,7 +118,8 @@
   <section class="panel" id="comp-panel" hidden>
     <div class="panel-head">
       <div>
-        <h2>训练样本构成 <span class="mono tag">batch composition</span></h2>
+        <h2>训练样本构成 <span class="mono tag">batch composition</span>
+          <button class="qbtn" data-g="comp" title="讲解这张图">?</button></h2>
         <p class="panel-sub">每一步真正拿来训练的 prompt 来自哪些数据集类别 · 悬停看图例</p>
       </div>
       <div class="comp-ctl">
@@ -127,8 +142,9 @@
   <section class="panel">
     <div class="panel-head">
       <div>
-        <h2>训练指标全景 <span class="tag">官方精选 18 项</span></h2>
-        <p class="panel-sub">每一步的训练健康度指标 · 鼠标悬停看说明</p>
+        <h2>训练指标全景 <span class="tag">官方精选 18 项</span>
+          <button class="qbtn" data-g="metrics" title="讲解这块面板">?</button></h2>
+        <p class="panel-sub">每一步的训练健康度指标 · 点卡片看逐项讲解</p>
       </div>
     </div>
     <div class="metric-grid" id="metric-grid"><div class="empty">加载中…</div></div>
@@ -229,9 +245,28 @@
   <span id="foot-stream" class="mono"></span>
 </footer>
 
+<div class="gl-mask" id="gl-mask" hidden></div>
+<aside class="gl-drawer" id="gl-drawer" hidden aria-label="指标讲解">
+  <div class="gl-head">
+    <div>
+      <div class="gl-kicker" id="gl-kicker"></div>
+      <h3 id="gl-title"></h3>
+      <div class="gl-sub mono" id="gl-sub"></div>
+    </div>
+    <button class="gl-close" id="gl-close" title="关闭">×</button>
+  </div>
+  <div class="gl-body" id="gl-body"></div>
+  <div class="gl-foot" id="gl-foot">
+    <button class="gl-nav" id="gl-prev">← 上一个</button>
+    <span class="gl-pos" id="gl-pos"></span>
+    <button class="gl-nav" id="gl-next">下一个 →</button>
+  </div>
+</aside>
+
 <div class="toast" id="toast"></div>
 
-<script src="narrator.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script src="glossary.js?v=8"></script>
+<script src="narrator.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

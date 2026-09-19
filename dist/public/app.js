@@ -508,7 +508,7 @@
                '<span class="m-total ' + (total > 0 ? "up" : total < 0 ? "down" : "") + '">累计 ' +
                  (total > 0 ? "+" : "") + total.toFixed(2) + "</span></div>";
       }).join("");
-      return '<div class="bench-card">' +
+      return '<div class="bench-card" data-gm="bench" title="点一下看离线评测的讲解">' +
              '<div class="m-head"><span class="m-zh">' + esc(it.info.zh || b.title) + "</span>" +
              '<span class="m-key mono">' + esc(b.title) + (b.note ? " · " + esc(b.note) : "") + "</span></div>" +
              '<div class="m-vals">' + vals + "</div>" +
@@ -525,6 +525,190 @@
         minimal: true, width: 340, height: 120,
         tipFmt: function (v) { return v.toFixed(2); },
       });
+    });
+  }
+
+  /* ================= 指标讲解抽屉 =================
+     点击任意指标卡片或面板标题旁的「?」打开。
+     now 段是拿实时数值算出来的，所以讲的内容跟着数据走。 */
+  var glCur = null;
+
+  function glStatOf(ss, runKey) {
+    for (var i = 0; i < ss.length; i++) {
+      if (ss[i].key !== runKey) continue;
+      var ys = ss[i].pts.map(function (p) { return p.y; });
+      if (!ys.length) return {};
+      return {
+        last: ys[ys.length - 1],
+        prev: ys.length > 1 ? ys[ys.length - 2] : null,
+        first: ys[0],
+        min: Math.min.apply(null, ys),
+        max: Math.max.apply(null, ys),
+        n: ys.length,
+      };
+    }
+    return {};
+  }
+
+  function glCtx(k) {
+    var ss = metricSeries(k);
+    var a = glStatOf(ss, "pro"), f = glStatOf(ss, "flash");
+    if (!a.n && f.n) a = f;
+    var c = {
+      last: a.last == null ? null : a.last,
+      prev: a.prev == null ? null : a.prev,
+      first: a.first == null ? null : a.first,
+      min: a.min, max: a.max, n: a.n || 0,
+      flash: f.last == null ? null : f.last,
+      delta: (a.last != null && a.prev != null) ? a.last - a.prev : null,
+      zero: null,
+    };
+    if (k === "dynsam/passrate/one") {
+      var z = glStatOf(metricSeries("dynsam/passrate/zero"), "pro");
+      c.zero = z.last == null ? null : z.last;
+    }
+    return c;
+  }
+
+  function glPara(text) {
+    return String(text).split(/\n{2,}/).map(function (p) {
+      return '<p>' + esc(p) + "</p>";
+    }).join("");
+  }
+  function glSec(title, html) {
+    return '<section class="gl-sec"><h4>' + esc(title) + "</h4>" + html + "</section>";
+  }
+  function glLinks(list) {
+    if (!list || !list.length) return "";
+    var items = list.map(function (k) {
+      var it = GLOSSARY.items[k];
+      return '<button class="gl-link" data-gk="' + esc(k) + '">' + esc(it ? it.zh : k) + "</button>";
+    }).join("");
+    return glSec("相关指标", '<div class="gl-links">' + items + "</div>");
+  }
+
+  function renderGlossaryIndex() {
+    var mods = Object.keys(GLOSSARY.modules).map(function (k) {
+      var m = GLOSSARY.modules[k];
+      return '<button class="gl-idx-item" data-gm="' + esc(k) + '">' +
+             '<span class="gi-t">' + esc(m.zh) + "</span>" +
+             '<span class="gi-s mono">' + esc(m.sub || "") + "</span></button>";
+    }).join("");
+    var mets = GLOSSARY.order.map(function (k) {
+      var it = GLOSSARY.items[k];
+      return '<button class="gl-idx-item" data-gk="' + esc(k) + '">' +
+             '<span class="gi-t">' + esc(it.zh) + "</span>" +
+             '<span class="gi-s mono">' + esc(k) + "</span></button>";
+    }).join("");
+    return '<div class="gl-intro">' +
+           "<p>这块看板有几十个数字。它们不是随便画的，每一个都对应训练过程里的一个具体环节。</p>" +
+           "<p>下面分两组：先看<strong>图表模块</strong>（每块面板在讲什么），" +
+           "再看<strong>18 个训练指标</strong>（逐个讲它度量什么、图怎么看、现在的值在说什么）。</p>" +
+           '<p class="gl-tip">提示：总览页里直接点任意一张指标卡片，也能打开对应讲解；' +
+           "面板标题旁的「?」是该面板的讲解。</p></div>" +
+           glSec("图表模块", '<div class="gl-idx">' + mods + "</div>") +
+           glSec("18 个训练指标", '<div class="gl-idx">' + mets + "</div>");
+  }
+
+  function renderGlossary(key) {
+    var drawer = $("gl-drawer"), mask = $("gl-mask"), body = $("gl-body");
+    if (!drawer || !body) return;
+    glCur = key;
+    var G = GLOSSARY;
+
+    if (key === "__index") {
+      $("gl-kicker").textContent = "看板导读";
+      $("gl-title").textContent = "这些图和数字在说什么";
+      $("gl-sub").textContent = "";
+      body.innerHTML = renderGlossaryIndex();
+      $("gl-foot").hidden = true;
+    } else if (G.modules[key]) {
+      var m = G.modules[key];
+      $("gl-kicker").textContent = "图表讲解";
+      $("gl-title").textContent = m.zh;
+      $("gl-sub").textContent = m.sub || "";
+      body.innerHTML = '<div class="gl-lead">' + esc(m.body.split(/\n{2,}/)[0]) + "</div>" +
+                       glPara(m.body.split(/\n{2,}/).slice(1).join("\n\n")) +
+                       glLinks(m.link);
+      $("gl-foot").hidden = false;
+      $("gl-pos").textContent = "";
+      $("gl-prev").hidden = true;
+      $("gl-next").hidden = true;
+    } else {
+      var it = G.items[key];
+      if (!it) {
+        var fb = G.fallback(key);
+        $("gl-kicker").textContent = "指标（暂无专门讲解）";
+        $("gl-title").textContent = fb.zh;
+        $("gl-sub").textContent = key;
+        body.innerHTML = '<div class="gl-lead">' + esc(fb.body) + "</div>" +
+                         glSec("怎么读这个名字", "<p>" + esc(key) + " 可以按前缀判断类别：" +
+                               "timing 是耗时，rate/ratio 是比率，mean 是均值，" +
+                               "num/count 是数量，norm 是范数，kl 是分布差异。</p>");
+        $("gl-foot").hidden = true;
+      } else {
+        var c = glCtx(key);
+        var idx = G.order.indexOf(key);
+        $("gl-kicker").textContent = "训练指标 " + (idx + 1) + " / " + G.order.length;
+        $("gl-title").textContent = it.zh;
+        $("gl-sub").textContent = key;
+        var nowTxt = "";
+        try { nowTxt = it.now ? it.now(c) : ""; } catch (e) { nowTxt = ""; }
+        var vals = "";
+        if (c.last != null) {
+          vals = '<div class="gl-now">' +
+                 '<span class="gn-v">' + esc(fmtMetric(c.last, it.unit || "num")) + "</span>" +
+                 (c.delta == null ? "" : '<span class="gn-d ' + (c.delta > 0 ? "up" : c.delta < 0 ? "down" : "") + '">' +
+                   (c.delta > 0 ? "+" : "") + esc(fmtMetric(c.delta, it.unit || "num")) + "</span>") +
+                 '<span class="gn-k">pro 最新一步</span></div>';
+        }
+        body.innerHTML = '<div class="gl-lead">' + esc(it.one) + "</div>" +
+                         glSec("这是什么", "<p>" + esc(it.what) + "</p>") +
+                         glSec("这张图怎么看", "<p>" + esc(it.read) + "</p>") +
+                         glSec("现在的数在说什么", vals + "<p>" + esc(nowTxt) + "</p>") +
+                         glSec("什么情况要警惕", "<p>" + esc(it.watch) + "</p>") +
+                         glLinks(it.link);
+        $("gl-foot").hidden = false;
+        $("gl-pos").textContent = (idx + 1) + " / " + G.order.length;
+        $("gl-prev").hidden = idx <= 0;
+        $("gl-next").hidden = idx < 0 || idx >= G.order.length - 1;
+      }
+    }
+
+    drawer.hidden = false;
+    mask.hidden = false;
+    body.scrollTop = 0;
+  }
+
+  function closeGlossary() {
+    var d = $("gl-drawer"), m = $("gl-mask");
+    if (d) d.hidden = true;
+    if (m) m.hidden = true;
+    glCur = null;
+  }
+
+  function bindGlossary() {
+    if (bindGlossary._done) return;   // 防重复绑定：否则一次点击会被处理两遍
+    bindGlossary._done = true;
+    document.addEventListener("click", function (e) {
+      var t = e.target;
+      if (t.closest) {
+        var q = t.closest(".qbtn[data-g], .gb-btn[data-g]");
+        if (q) { renderGlossary(q.dataset.g); return; }
+        var gm = t.closest("[data-gm]");
+        if (gm) { renderGlossary(gm.dataset.gm); return; }
+        var gk = t.closest("[data-gk]");
+        if (gk) { renderGlossary(gk.dataset.gk); return; }
+      }
+      if (t.id === "gl-close" || t.id === "gl-mask") { closeGlossary(); return; }
+      if (t.id === "gl-prev" || t.id === "gl-next") {
+        var i = GLOSSARY.order.indexOf(glCur);
+        if (i >= 0) renderGlossary(GLOSSARY.order[t.id === "gl-prev" ? i - 1 : i + 1]);
+        return;
+      }
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeGlossary();
     });
   }
 
@@ -595,7 +779,7 @@
         if (v == null || typeof v !== "number" || isNaN(v)) continue;
         pts.push({ x: steps[i] != null ? steps[i] : i + 1, y: v });
       }
-      if (pts.length) out.push({ name: r.label || r.key, color: COLORS[r.key] || "#8892a6", pts: pts });
+      if (pts.length) out.push({ key: r.key, name: r.label || r.key, color: COLORS[r.key] || "#8892a6", pts: pts });
     });
     return out;
   }
@@ -628,7 +812,7 @@
                  (delta > 0 ? "+" : "") + esc(fmtMetric(delta, d.kind)) + "</span>") +
                "</div>";
       }).join("");
-      return '<div class="metric-card">' +
+      return '<div class="metric-card" data-gk="' + esc(d.k) + '" title="点一下看这项指标的详细讲解">' +
              '<div class="m-head"><span class="m-zh">' + esc(d.zh) + "</span>" +
              '<span class="m-key mono">' + esc(d.k) + "</span></div>" +
              '<div class="m-vals">' + vals + "</div>" +
@@ -959,7 +1143,7 @@
         }
         if (pts.length) { last = pts[pts.length - 1].y; prev = pts.length > 1 ? pts[pts.length - 2].y : null; }
         var d = prev == null ? null : last - prev;
-        return '<div class="metric-card">' +
+        return '<div class="metric-card" data-gk="' + esc(t) + '" title="点一下看讲解">' +
                '<div class="m-head"><span class="m-zh mono">' + esc(t) + "</span></div>" +
                '<div class="m-vals"><div class="m-val"><span class="m-num">' + esc(fmtTag(t, last)) + "</span>" +
                  (d == null ? "" : '<span class="m-delta ' + (d > 0 ? "up" : d < 0 ? "down" : "") + '">' +
@@ -1285,6 +1469,7 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     initTheme();
+    bindGlossary();
     initNav();
     bindSeg("run-switch", function () { return state.evRun; }, function (v) { state.evRun = v; });
     bindSeg("ds-run-switch", function () { return state.dsRun; }, function (v) { state.dsRun = v; });

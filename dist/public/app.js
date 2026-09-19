@@ -547,6 +547,7 @@
   var glAiBuf = null;
   var glAiAvail = null; // null=还没探测，true/false=探测结果
   var glAiThinkOpen = false; // 思考框的展开状态：重渲染时保持，否则会被合上
+  var glAiPlanOpen = false;  // 「查询决策」框同上
   /* 讲解抽屉的两个分页：fixed=程序写死的固定讲解，ai=调用模型生成的讲解。
      两者分开显示，避免「哪些是写死的、哪些是模型说的」混在一起看不清。 */
   var glTab = "fixed";
@@ -785,6 +786,8 @@
     if (st && st.status === "done") text = st.text;
     else if (st && st.status === "error") { text = st.err || "生成失败"; cls += " is-err"; }
     var think = st && st.think ? st.think : "";
+    // 工具轮里「决定查什么」的思考，跟后面分析数据的思考分开显示
+    var plan = st && st.plan ? st.plan : "";
     var tools = st && st.tools && st.tools.length ? st.tools : null;
     var hint = st ? "" : '<p class="gl-ai-tip">模型会读取这个指标此刻的真实数据后开讲，' +
                          "内容跟着数据走，不是背好的固定文案。</p>";
@@ -795,6 +798,14 @@
                  '<span class="gl-ai-tool-s">' + esc(t.summary || "") + "</span>" +
                "</div>";
       }).join("") : "") + "</div>";
+    var planHtml = '<details class="gl-ai-think" id="gl-ai-plan"' +
+                     (glAiPlanOpen ? " open" : "") + (plan ? "" : " hidden") + ">" +
+                     "<summary>" +
+                       '<span class="gl-spin" aria-hidden="true"></span>' +
+                       '<span id="gl-ai-plan-t">查询决策</span>' +
+                     "</summary>" +
+                     '<div class="gl-ai-think-b">' + esc(plan) + "</div>" +
+                   "</details>";
     return '<div class="gl-ai">' +
              glNowHtml(key, c) +
              '<div class="gl-ai-bar">' +
@@ -804,6 +815,7 @@
                  (st && st.model ? esc(st.model) : "") + "</span>" + why +
              "</div>" +
              hint +
+             planHtml +
              toolsHtml +
              '<details class="gl-ai-think" id="gl-ai-think"' +
                (glAiThinkOpen ? " open" : "") + (think ? "" : " hidden") + ">" +
@@ -830,6 +842,7 @@
         status: "done",
         text: String(glAiBuf.acc).replace(/^[\s　]+/, ""),
         think: glAiBuf.think,
+        plan: glAiBuf.plan,
         model: glAiBuf.model,
         tools: glAiBuf.tools,
       };
@@ -841,11 +854,12 @@
   function runAiExplain(key) {
     if (glAiBusy) return;
     var out = $("gl-ai-out"), statusEl = $("gl-ai-status"), thinkEl = $("gl-ai-think");
+    var planEl = $("gl-ai-plan"); // 「查询决策」：工具轮里决定查什么的思考
     if (!out) return;
 
     var token = ++glAiToken;
     glAiBusy = true;
-    glAiBuf = { key: key, acc: "", think: "", model: "", err: "", started: false, tools: [] };
+    glAiBuf = { key: key, acc: "", think: "", plan: "", model: "", err: "", started: false, tools: [] };
     glAi[key] = null;
     var toolsBox = $("gl-ai-tools");
     if (toolsBox) { toolsBox.hidden = true; toolsBox.textContent = ""; }
@@ -858,6 +872,11 @@
       thinkEl.hidden = true;
       var tb = thinkEl.querySelector(".gl-ai-think-b");
       if (tb) tb.textContent = "";
+    }
+    if (planEl) {
+      planEl.hidden = true;
+      var pbx = planEl.querySelector(".gl-ai-think-b");
+      if (pbx) pbx.textContent = "";
     }
     if (statusEl) { statusEl.hidden = false; statusEl.textContent = "AI 正在读取当前数据…"; }
 
@@ -880,22 +899,28 @@
       box.appendChild(row);
     }
 
-    /* 思考中把折叠标题改成「正在思考…」并转圈，思考结束改回静态标题。
-       这样收起状态下也能一眼看出在干什么，而不是一个空白框。 */
+    /* 生成中把折叠标题改成进行时态并转圈，结束改回静态标题。
+       这样收起状态下也能一眼看出在干什么，而不是一个空白框。
+       「查询决策」和「AI 思考过程」是两个框，用同一套逻辑。 */
+    function setBoxLive(el, titleId, on, liveText, idleText) {
+      if (!el) return;
+      if (on) el.classList.add("is-live");
+      else el.classList.remove("is-live");
+      var tEl = $(titleId);
+      if (tEl) tEl.textContent = on ? liveText : idleText;
+    }
     function setThinking(on) {
-      if (thinkEl) {
-        if (on) thinkEl.classList.add("is-live");
-        else thinkEl.classList.remove("is-live");
-      }
-      var tEl = $("gl-ai-think-t");
-      if (tEl) tEl.textContent = on ? "正在思考…" : "AI 思考过程";
+      setBoxLive(thinkEl, "gl-ai-think-t", on, "正在思考…", "AI 思考过程");
+    }
+    function setPlanning(on) {
+      setBoxLive(planEl, "gl-ai-plan-t", on, "正在决定查什么…", "查询决策");
     }
 
-    /* 思考内容在长，展开后要自己往下拖才能看到新字，很累。
-       思考阶段（正文还没开始）始终贴底；正文开始后只在用户本来就在底部时才跟随。 */
-    function followThink(force) {
-      if (!thinkEl || !thinkEl.open) return;
-      var tbox = thinkEl.querySelector(".gl-ai-think-b");
+    /* 内容一直在涨，展开后要自己往下拖才能看到新字，很累。
+       生成阶段（正文还没开始）始终贴底；正文开始后只在用户本来就在底部时才跟随。 */
+    function followBox(el, force) {
+      if (!el || !el.open) return;
+      var tbox = el.querySelector(".gl-ai-think-b");
       if (!tbox) return;
       if (force || tbox.scrollHeight - tbox.scrollTop - tbox.clientHeight < 60) {
         tbox.scrollTop = tbox.scrollHeight;
@@ -917,6 +942,7 @@
       if (!buf || token !== glAiToken) return;
       if (statusEl) statusEl.hidden = true;
       setThinking(false); // 收尾时一定把转圈和「正在思考」撤掉
+      setPlanning(false);
       out.className = "gl-ai-out" + (buf.err ? " is-err" : "");
       if (buf.err) {
         out.textContent = buf.err;
@@ -925,7 +951,7 @@
         // 模型爱在正文开头吐几个换行，pre-wrap 下会显示成空白行，去掉
         var txt = String(buf.acc).replace(/^[\s　]+/, "");
         out.textContent = txt;
-        glAi[key] = { status: "done", text: txt, think: buf.think, model: buf.model, tools: buf.tools };
+        glAi[key] = { status: "done", text: txt, think: buf.think, plan: buf.plan, model: buf.model, tools: buf.tools };
         var mEl = $("gl-ai-model");
         if (mEl && buf.model) mEl.textContent = buf.model;
         var btn = document.querySelector('.gl-ai-btn[data-ai="' + key + '"]');
@@ -973,14 +999,30 @@
               if (!b.started) out.textContent = "AI 正在查阅数据…";
               follow();
             } else if (j.think) {
-              b.think += j.think;
-              if (!b.started) out.textContent = "AI 正在思考，想清楚后开始输出…";
-              if (statusEl) { statusEl.hidden = false; statusEl.textContent = "AI 正在思考…"; }
-              if (thinkEl) {
-                if (thinkEl.hidden) { thinkEl.hidden = false; setThinking(true); }
-                var tbb = thinkEl.querySelector(".gl-ai-think-b");
-                if (tbb) tbb.textContent = b.think;
-                followThink(!b.started); // 思考阶段强制贴底，正文开始后只在贴底时跟随
+              /* phase=tool 是工具轮「决定查什么」的思考，进「查询决策」框；
+                 其余是拿到数据后分析用的思考，进「AI 思考过程」框。两者分开，
+                 否则决策和分析混在一起，看不出它为什么查这两个指标。 */
+              var isPlan = j.phase === "tool";
+              var box = isPlan ? planEl : thinkEl;
+              if (isPlan) b.plan += j.think; else b.think += j.think;
+              var boxTxt = isPlan ? b.plan : b.think;
+              if (!b.started) {
+                out.textContent = isPlan
+                  ? "AI 正在决定查哪些数据…"
+                  : "AI 正在思考，想清楚后开始输出…";
+              }
+              if (statusEl) {
+                statusEl.hidden = false;
+                statusEl.textContent = isPlan ? "AI 正在决定查什么…" : "AI 正在思考…";
+              }
+              if (box) {
+                if (box.hidden) {
+                  box.hidden = false;
+                  if (isPlan) setPlanning(true); else setThinking(true);
+                }
+                var tbb = box.querySelector(".gl-ai-think-b");
+                if (tbb) tbb.textContent = boxTxt;
+                followBox(box, !b.started); // 生成阶段强制贴底，正文开始后只在贴底时跟随
               }
             } else if (j.done) {
               b.model = j.model || "";
@@ -1064,8 +1106,9 @@
        toggle 事件不冒泡，所以必须用捕获阶段监听。 */
     document.addEventListener("toggle", function (e) {
       var el = e.target;
-      if (!el || el.id !== "gl-ai-think") return;
-      glAiThinkOpen = !!el.open;
+      if (!el || (el.id !== "gl-ai-think" && el.id !== "gl-ai-plan")) return;
+      if (el.id === "gl-ai-think") glAiThinkOpen = !!el.open;
+      else glAiPlanOpen = !!el.open;
       if (!el.open) return;
       var tbox = el.querySelector(".gl-ai-think-b");
       if (tbox) tbox.scrollTop = tbox.scrollHeight;

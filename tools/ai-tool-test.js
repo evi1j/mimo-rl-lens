@@ -94,6 +94,9 @@ const BASE = 'http://127.0.0.1:8787';
     let buf = '';
     let txt = '';
     let think = '';
+    let plan = '';          // 工具轮「决定查什么」的思考
+    let planChunks = 0;     // 收到多少块——流式应当是很多小块的
+    let planAtFirstTool = -1; // 第一次工具调用时，决策思考已经吐了多少字
     const tools = [];
     let done = null;
     for (;;) {
@@ -107,13 +110,24 @@ const BASE = 'http://127.0.0.1:8787';
         let j;
         try { j = JSON.parse(line); } catch (e) { continue; }
         if (j.delta) txt += j.delta;
-        else if (j.think) think += j.think;
-        else if (j.tool) tools.push(j.tool);
-        else if (j.done) done = j;
+        else if (j.think) {
+          // phase=tool 是工具轮「决定查什么」的思考，跟分析数据的思考分开
+          if (j.phase === 'tool') { plan += j.think; planChunks++; }
+          else think += j.think;
+        } else if (j.tool) {
+          if (planAtFirstTool < 0) planAtFirstTool = plan.length;
+          tools.push(j.tool);
+        } else if (j.done) done = j;
       }
     }
 
     check('收到工具调用事件', tools.length > 0, String(tools.length) + ' 次');
+    /* 工具轮改成流式后，「决定查什么」的思考要能逐块吐出来。
+       以前是非流式，这段思考直接被丢掉，界面看起来像「没想就开查」。 */
+    check('工具轮的「决策思考」被推送出来', plan.length > 0, String(plan.length) + ' 字');
+    check('决策思考是流式分块到达（不是一次性塞入）', planChunks > 3, planChunks + ' 块');
+    check('决策思考先于第一次工具调用产生', planAtFirstTool > 0,
+      '首次调用时已吐 ' + String(planAtFirstTool) + ' 字');
     check('调用的都在已定义工具里',
       tools.every(function (t) { return names.indexOf(t.name) >= 0; }),
       tools.map(function (t) { return t.name; }).join(','));

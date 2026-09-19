@@ -537,23 +537,118 @@ async function toolChat(cfg, messages, toolChoice) {
   return { calls: (msg && msg.tool_calls) || [], content: (msg && msg.content) || '', model: model };
 }
 
+/* 流式工具轮：既要拿到 tool_calls，也要把「决定查什么」的思考逐块吐给前端。
+   实测：该模型流式下约 0.5s 就开始吐 reasoning_content，tool_calls 要到 3s 左右
+   才发出来。非流式等于让用户对着空白干等整段，还白白丢掉这段思考。
+   增量累积：arguments 是分块到达的字符串，必须按 index 拼接后才是完整 JSON。 */
+async function streamToolChat(cfg, messages, toolChoice, onThink) {
+  const model = await resolveModel(cfg);
+  const url = String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions';
+  const body = {
+    model: model,
+    messages: messages,
+    tools: TOOLS,
+    temperature: 0, // 这一轮只要它选对工具和参数，不需要创造性
+    // 流式下思考也占额度，比非流式给足一些，免得思考写完 tool_calls 被截断
+    max_tokens: Number(cfg.toolMaxTokens) || 1200,
+    stream: true,
+  };
+  if (toolChoice) body.tool_choice = toolChoice;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer ' + (cfg.apiKey || 'sk-no-key'),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(Number(cfg.timeoutMs) || 120000),
+  });
+  if (!res.ok || !res.body) {
+    let detail = '';
+    try { detail = (await res.text()).slice(0, 200); } catch (e) { /* ignore */ }
+    throw new Error('HTTP ' + res.status + ' ' + detail);
+  }
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder('utf-8');
+  let buf = '';
+  let stop = false;
+  const calls = {};
+  let content = '';
+  try {
+    for (;;) {
+      const r = await reader.read();
+      if (r.done) break;
+      buf += dec.decode(r.value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        const t = line.trim();
+        if (t.indexOf('data:') !== 0) continue;
+        const payload = t.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        let j;
+        try { j = JSON.parse(payload); } catch (e) { continue; }
+        const d = j && j.choices && j.choices[0] && j.choices[0].delta;
+        if (!d) continue;
+        const think = typeof d.reasoning_content === 'string' ? d.reasoning_content
+          : (typeof d.reasoning === 'string' ? d.reasoning : '');
+        if (think && onThink && onThink(think) === false) { stop = true; break; }
+        if (typeof d.content === 'string' && d.content) content += d.content;
+        const tcs = d.tool_calls || [];
+        for (const tc of tcs) {
+          const i = tc.index || 0;
+          if (!calls[i]) calls[i] = { id: '', name: '', args: '' };
+          if (tc.id) calls[i].id += tc.id;
+          const fn = tc.function || {};
+          if (fn.name) calls[i].name += fn.name;
+          if (typeof fn.arguments === 'string') calls[i].args += fn.arguments;
+        }
+      }
+      if (stop) break;
+    }
+  } finally {
+    if (stop) { try { await reader.cancel(); } catch (e) { /* ignore */ } }
+  }
+  const list = Object.keys(calls).sort(function (a, b) { return Number(a) - Number(b); })
+    .map(function (k) {
+      return {
+        id: calls[k].id,
+        function: { name: calls[k].name, arguments: calls[k].args },
+      };
+    });
+  return { calls: list, content: content, model: model, aborted: stop };
+}
+
 /* 工具轮：让模型先用工具查数据，再写正文。返回实际跑了几轮。
    任何一步失败都降级为「不查工具直接讲」，绝不把整条讲解链路打断。 */
-async function toolPhase(cfg, messages, onTool) {
+async function toolPhase(cfg, messages, onTool, onThink) {
   let rounds = 0;
   for (let i = 0; i < MAX_TOOL_ROUNDS; i++) {
     let out;
     try {
       // 工具轮单独压低超时：它应当秒回，不该占满讲解的时间预算
-      out = await toolChat(
+      out = await streamToolChat(
         Object.assign({}, cfg, { timeoutMs: 30000 }),
         messages,
-        rounds === 0 ? 'required' : 'auto'
+        rounds === 0 ? 'required' : 'auto',
+        onThink
       );
     } catch (e) {
-      console.log('ai explain: 工具调用不可用（' + String(e.message || e).slice(0, 60) + '），改为直接讲解');
-      return rounds;
+      // 流式工具轮不通（服务不支持 / 参数不认）就退回非流式，别直接放弃查数据
+      console.log('ai explain: 流式工具轮不可用（' + String(e.message || e).slice(0, 60) + '），回退非流式');
+      try {
+        out = await toolChat(
+          Object.assign({}, cfg, { timeoutMs: 30000 }),
+          messages,
+          rounds === 0 ? 'required' : 'auto'
+        );
+      } catch (e2) {
+        console.log('ai explain: 工具调用不可用（' + String(e2.message || e2).slice(0, 60) + '），改为直接讲解');
+        return rounds;
+      }
     }
+    if (out.aborted) return rounds; // 客户端已断开
     const calls = out.calls || [];
     if (!calls.length) return rounds; // 模型不查了，直接写正文
 
@@ -667,7 +762,9 @@ async function explainMetric(payload, onDelta, onThink, onTool) {
       if (onTool(info) === false) { aborted = true; return false; }
       return true;
     } : null;
-    rounds = await toolPhase(cfg, messages, onToolSafe);
+    // 工具轮的思考标记成 'tool'，前端放进「查询决策」区，跟后面分析数据的思考分开
+    const onThinkTool = onThink ? function (t) { return onThink(t, 'tool'); } : null;
+    rounds = await toolPhase(cfg, messages, onToolSafe, onThinkTool);
     if (rounds) console.log('ai explain: 工具轮 ' + rounds + ' 次，随后生成正文');
     if (aborted) return { model: '', toolRounds: rounds, aborted: true };
   }

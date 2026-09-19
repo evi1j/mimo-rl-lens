@@ -481,6 +481,22 @@ function queryBench(bench, run) {
   } catch (e) { return []; }
 }
 
+/* 训练状态查询：不传 run 返回每个 run 的最新一条 */
+function queryRunState(run) {
+  if (!init()) return [];
+  try {
+    if (run) {
+      return db.prepare('SELECT * FROM run_state WHERE run=? ORDER BY step DESC LIMIT 1').all(run);
+    }
+    // 每个 run 只取最新一步：用 MAX(step) 子查询，避免把所有快照都捞出来
+    return db.prepare(
+      'SELECT r.* FROM run_state r INNER JOIN' +
+      ' (SELECT run, MAX(step) AS ms FROM run_state GROUP BY run) m' +
+      ' ON r.run = m.run AND r.step = m.ms ORDER BY r.run'
+    ).all();
+  } catch (e) { return []; }
+}
+
 /* 库里已有的最新 step，用来判断要不要重新拉一次全量 */
 function latestStep(run) {
   if (!init()) return null;
@@ -567,6 +583,6 @@ module.exports = {
   init, loadNarrator, saveNarrator, saveMetrics,
   history, toCSV, searchNarrator, stats,
   saveSeries, saveTagMeta, saveBench, saveRunState,
-  querySeries, searchTags, queryBench, latestStep, checkpoint, unitFor,
+  querySeries, searchTags, queryBench, queryRunState, latestStep, checkpoint, unitFor,
   get enabled() { return init(); },
 };

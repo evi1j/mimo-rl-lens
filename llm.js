@@ -22,6 +22,9 @@ const DEFAULTS = {
   // 传 low 时思考降到约 480 字、正文 359 字且更快出字。minimal 本服务不支持（400）。
   explainMaxTokens: 4000,
   explainReasoningEffort: 'low',
+  // 工具轮：给 AI 配本地查询工具，让它自己决定查什么
+  explainUseTools: true,
+  toolMaxTokens: 800, // 工具轮只要输出 tool_calls，不需要长文本
 };
 
 function loadConfig() {
@@ -299,6 +302,16 @@ const EXPLAIN_SYSTEM = [
   '- 只使用 data 里给的数字。没有的数字不要编，也不要臆测没给出信息的原因。',
   '- 语气平实，不煽情，不用「值得注意的是」「综上所述」这类套话。',
   '',
+  '你有工具可以查真实数据，优先级高于 data 里预置的摘要：',
+  '- list_metrics：按名字检索指标。**引用任何指标名前先用它确认存在**，不要凭记忆写名字。',
+  '- query_series：查某个指标每一步的历史值。data 里只有最近若干步，要看趋势/拐点/波动范围就用它。',
+  '- run_status：查训练进度、阶段、每步样本规模、累计花费，用来判断「现在训练到哪了」。',
+  '- query_bench：查评测分数，把训练指标和最终效果连起来看。',
+  '工具返回 error 就是没查到——换名字或换个角度，绝不能编造没查到的数据。',
+  '',
+  '查数据只在开讲前的工具阶段进行，请把要用的数据一次查全。',
+  '开写正文后不要再请求查数据，也不要输出任何标签、代码或工具调用格式，只写自然段落。',
+  '',
   '输出三段纯文本，段落之间空一行。不要 markdown 标题符号、不要列表符号、不要代码块。',
   '',
   '第 1 段：这个数现在处在什么状态。要结合具体数字——当前值、相对第一步变化了多少、',
@@ -310,11 +323,262 @@ const EXPLAIN_SYSTEM = [
   '每段 2~4 句，全文不超过 400 字。',
 ].join('\n');
 
+/* ================================================================
+   查询工具（function calling）
+   让模型自己决定要查什么，而不是我们猜它要什么。
+   数据来自本地 SQLite（store.js），所以完全离线、不额外打上游。
+   ================================================================ */
+
+const TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'list_metrics',
+      description: '按名字检索可用指标，返回准确的指标名、单位和含义。引用任何指标名前都要先用它确认存在，避免写错名字。不传 q 时返回看板置顶的重点指标。',
+      parameters: {
+        type: 'object',
+        properties: {
+          q: { type: 'string', description: '指标名前缀或片段，如 dynsam、actor、timing_s/rollout。前缀越短命中越多。' },
+          limit: { type: 'integer', description: '最多返回多少条，默认 30，上限 200' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_series',
+      description: '查询某个指标每一步的历史数值，用来看趋势、拐点、波动范围、最高最低出现在第几步。',
+      parameters: {
+        type: 'object',
+        properties: {
+          tag: { type: 'string', description: '指标名，必须先经 list_metrics 确认存在' },
+          run: { type: 'string', description: '训练任务 pro 或 flash；不传则同时返回两个 run' },
+          from: { type: 'integer', description: '只看第几步之后的数据，可选' },
+        },
+        required: ['tag'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_status',
+      description: '查询训练任务的整体状态：当前第几步、进度百分比、阶段、重启次数、每步训练样本数、每步 prompt 数、累计花费。用来判断训练进行到什么阶段、规模多大。',
+      parameters: {
+        type: 'object',
+        properties: {
+          run: { type: 'string', description: 'pro 或 flash；不传则返回全部' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_bench',
+      description: '查询离线评测分数（每个评测在每个训练步的得分），用来把训练过程指标和最终效果联系起来。不传 bench 时返回有哪些评测。',
+      parameters: {
+        type: 'object',
+        properties: {
+          bench: { type: 'string', description: '评测名，如 deepswe；不传返回评测列表' },
+          run: { type: 'string', description: 'pro 或 flash' },
+        },
+        required: [],
+      },
+    },
+  },
+];
+
+const MAX_TOOL_ROUNDS = 3;     // 工具轮上限，防止模型绕圈子
+const SERIES_MAX_POINTS = 80;  // 序列最多回传多少点，超过就等距抽样
+
+/* 序列太长时等距抽样，首末点必留 */
+function samplePoints(rows) {
+  if (rows.length <= SERIES_MAX_POINTS) return rows;
+  const out = [];
+  for (let i = 0; i < SERIES_MAX_POINTS; i++) {
+    out.push(rows[Math.round(i * (rows.length - 1) / (SERIES_MAX_POINTS - 1))]);
+  }
+  return out;
+}
+
+/* 给前端看的一行摘要，不要把整个结果塞过去 */
+function summarizeToolResult(name, res) {
+  if (!res) return '无返回';
+  if (res.error) return '没查到：' + String(res.error).slice(0, 80);
+  if (name === 'list_metrics') return '匹配到 ' + res.count + ' 个指标';
+  if (name === 'query_series') {
+    return res.tag + '（' + res.run + '）' + res.points + ' 个数据点' + (res.sampled ? '，已抽样' : '');
+  }
+  if (name === 'run_status') {
+    return (res.runs || []).map(function (r) {
+      return r.run + ' 第' + r.step + '步' + (r.progress != null ? ' 进度' + (r.progress * 100).toFixed(1) + '%' : '');
+    }).join('，');
+  }
+  if (name === 'query_bench') return (res.rows || []).length + ' 条评测分数';
+  return '已返回';
+}
+
+/* 真正执行工具。查不到必须返回明确 error —— 让模型换名字重试，
+   而不是静默失败后硬编一个不存在的指标出来。 */
+function runTool(name, args) {
+  let store;
+  try { store = require('./store.js'); } catch (e) { return { error: '本地数据层不可用' }; }
+  args = args || {};
+
+  if (name === 'list_metrics') {
+    const lim = Math.min(Math.max(Number(args.limit) || 30, 1), 200);
+    const rows = store.searchTags(String(args.q || ''), { limit: lim });
+    if (!rows.length) {
+      return { error: '没有匹配到任何指标（q="' + String(args.q || '') + '"）。换更短的前缀再试，如 dynsam、actor、timing_s、critic。' };
+    }
+    return {
+      count: rows.length,
+      metrics: rows.map(function (r) {
+        return { tag: r.tag, unit: r.unit || '', descr: r.descr || '' };
+      }),
+    };
+  }
+
+  if (name === 'query_series') {
+    const tag = String(args.tag || '');
+    if (!tag) return { error: '缺少 tag 参数' };
+    const rows = store.querySeries(args.run || null, tag, args.from != null ? Number(args.from) : null);
+    if (!rows.length) {
+      return { error: '库里没有 ' + tag + ' 的历史数据（run=' + (args.run || '全部') + '）。先用 list_metrics 确认准确名字，或换个 run 试试。' };
+    }
+    return {
+      tag: tag, run: args.run || 'pro+flash', points: rows.length,
+      sampled: rows.length > SERIES_MAX_POINTS,
+      series: samplePoints(rows).map(function (r) { return [r.step, r.v]; }),
+    };
+  }
+
+  if (name === 'run_status') {
+    const rows = store.queryRunState(args.run || null);
+    if (!rows.length) return { error: '库里还没有训练状态快照' };
+    return {
+      runs: rows.map(function (r) {
+        return {
+          run: r.run, step: r.step, progress: r.progress, phase: r.phase,
+          restarts: r.restarts, trained_step: r.trained_step,
+          prompts_per_step: r.prompts_per_step, cost_so_far: r.cost_so_far,
+        };
+      }),
+    };
+  }
+
+  if (name === 'query_bench') {
+    const rows = store.queryBench(args.bench || null, args.run || null);
+    if (!rows.length) return { error: '没有匹配的评测数据（bench=' + (args.bench || '全部') + '）' };
+    return { bench: args.bench || 'all', count: rows.length, rows: rows };
+  }
+
+  return { error: '没有名为 ' + name + ' 的工具。可用：list_metrics、query_series、run_status、query_bench' };
+}
+
+/* 兜底：个别情况下模型会在正文里写 <tool_call>…</tool_call> 标签（它想再查数据
+   但没被允许）。这类标签对观众毫无意义，直接剥掉。流式会把标签拆到多个 chunk，
+   所以要把「可能是标签开头但还没收全」的尾部扣住等下一块。 */
+const TOOL_CALL_OPEN = '<tool_call>';
+const TOOL_CALL_CLOSE = '</tool_call>';
+
+function filterToolCallText(onDelta) {
+  let drop = false;
+  let hold = '';
+  return function (chunk) {
+    let s = hold + String(chunk == null ? '' : chunk);
+    hold = '';
+    let out = '';
+    let i = 0;
+    while (i < s.length) {
+      if (!drop) {
+        const a = s.indexOf('<', i);
+        if (a < 0) { out += s.slice(i); break; }
+        out += s.slice(i, a);
+        const tail = s.slice(a);
+        if (tail.indexOf(TOOL_CALL_OPEN) === 0) { drop = true; i = a + TOOL_CALL_OPEN.length; }
+        else if (tail.length < TOOL_CALL_OPEN.length && TOOL_CALL_OPEN.indexOf(tail) === 0) {
+          hold = tail; break; // 像标签开头但没收全，扣住等下一块再判断
+        } else { out += '<'; i = a + 1; }
+      } else {
+        const b = s.indexOf(TOOL_CALL_CLOSE, i);
+        if (b < 0) {
+          const tail = s.slice(i);
+          hold = TOOL_CALL_CLOSE.indexOf(tail) === 0 ? tail : '';
+          break;
+        }
+        i = b + TOOL_CALL_CLOSE.length;
+        drop = false;
+      }
+    }
+    if (!out) return true;
+    return onDelta(out) !== false;
+  };
+}
+
+/* 非流式调用，只为了拿到 tool_calls。工具轮必须非流式——要先收完调用参数才能执行。 */
+async function toolChat(cfg, messages, toolChoice) {
+  const model = await resolveModel(cfg);
+  const body = {
+    model: model,
+    messages: messages,
+    tools: TOOLS,
+    temperature: 0, // 这一轮只要它选对工具和参数，不需要创造性
+    max_tokens: Number(cfg.toolMaxTokens) || 800,
+    stream: false,
+  };
+  if (toolChoice) body.tool_choice = toolChoice;
+  const j = await request(cfg, 'POST', '/chat/completions', body);
+  const msg = j && j.choices && j.choices[0] && j.choices[0].message;
+  return { calls: (msg && msg.tool_calls) || [], content: (msg && msg.content) || '', model: model };
+}
+
+/* 工具轮：让模型先用工具查数据，再写正文。返回实际跑了几轮。
+   任何一步失败都降级为「不查工具直接讲」，绝不把整条讲解链路打断。 */
+async function toolPhase(cfg, messages, onTool) {
+  let rounds = 0;
+  for (let i = 0; i < MAX_TOOL_ROUNDS; i++) {
+    let out;
+    try {
+      // 工具轮单独压低超时：它应当秒回，不该占满讲解的时间预算
+      out = await toolChat(
+        Object.assign({}, cfg, { timeoutMs: 30000 }),
+        messages,
+        rounds === 0 ? 'required' : 'auto'
+      );
+    } catch (e) {
+      console.log('ai explain: 工具调用不可用（' + String(e.message || e).slice(0, 60) + '），改为直接讲解');
+      return rounds;
+    }
+    const calls = out.calls || [];
+    if (!calls.length) return rounds; // 模型不查了，直接写正文
+
+    messages.push({ role: 'assistant', content: out.content || '', tool_calls: calls });
+    for (const c of calls) {
+      const fn = c.function || {};
+      let args = {};
+      try { args = JSON.parse(fn.arguments || '{}'); } catch (e) { args = {}; }
+      const res = runTool(fn.name, args);
+      if (onTool && onTool({
+        name: fn.name, args: args, summary: summarizeToolResult(fn.name, res),
+      }) === false) return rounds; // 客户端已断开
+      messages.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(res) });
+    }
+    rounds++;
+  }
+  return rounds;
+}
+
 /* SSE 流式读取。逐块解析 `data:` 行：
    推理型模型先吐思考（reasoning_content / reasoning）再吐正文（content），
    两者分开回调，前端只把正文上屏。onDelta/onThink 返回 false 表示客户端已断开，
    立刻停止读取并取消流，不再浪费 token。 */
-async function streamChat(cfg, messages, onDelta, onThink, effort) {
+async function streamChat(cfg, messages, onDelta, onThink, opts) {
+  opts = opts || {};
   const model = await resolveModel(cfg);
   const url = String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions';
   const body = {
@@ -327,7 +591,10 @@ async function streamChat(cfg, messages, onDelta, onThink, effort) {
     stream: true,
   };
   // effort 由调用方指定；为空则不传，交给服务默认行为
-  if (effort) body.reasoning_effort = effort;
+  if (opts.effort) body.reasoning_effort = opts.effort;
+  // 跑过工具轮后必须强制它出正文：否则它可能又去调工具，正文一个字都没有
+  if (opts.tools) body.tools = opts.tools;
+  if (opts.toolChoice) body.tool_choice = opts.toolChoice;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -378,7 +645,7 @@ async function streamChat(cfg, messages, onDelta, onThink, effort) {
 
 /* 讲解某个指标。payload 由前端组装（含该指标的固定文案与实时数值）。
    onDelta 收到正文片段，onThink 收到思考过程。失败一律抛错，由调用方降级。 */
-async function explainMetric(payload, onDelta, onThink) {
+async function explainMetric(payload, onDelta, onThink, onTool) {
   const cfg = loadConfig();
   setStatus({ enabled: !!cfg.enabled, baseUrl: cfg.baseUrl });
   if (!cfg.enabled) {
@@ -390,22 +657,46 @@ async function explainMetric(payload, onDelta, onThink) {
     { role: 'user', content: JSON.stringify(payload, null, 1) },
   ];
   const effort = cfg.explainReasoningEffort || 'low';
+
+  /* 先跑工具轮：模型自己决定查什么。失败一律降级成「不查工具直接讲」，
+     绝不能把整条讲解链路打断。 */
+  let rounds = 0;
+  let aborted = false;
+  if (cfg.explainUseTools !== false) {
+    const onToolSafe = onTool ? function (info) {
+      if (onTool(info) === false) { aborted = true; return false; }
+      return true;
+    } : null;
+    rounds = await toolPhase(cfg, messages, onToolSafe);
+    if (rounds) console.log('ai explain: 工具轮 ' + rounds + ' 次，随后生成正文');
+    if (aborted) return { model: '', toolRounds: rounds, aborted: true };
+  }
+
+  /* 流式轮刻意不再传 tools / tool_choice。
+     实测：带 tools 时模型会忍不住继续「要查数据」，而 tool_choice=none 又不给它
+     结构化调用，它就退化成在正文里写 <tool_call> 标签——观众看到的是一堆 XML
+     而不是讲解。工具结果已经在上下文里，够它用了。 */
+  const opts = { effort: effort };
+
+  const onDeltaSafe = filterToolCallText(onDelta || function () { return true; });
+
   try {
     let model;
     try {
-      model = await streamChat(cfg, messages, onDelta, onThink, effort);
+      model = await streamChat(cfg, messages, onDeltaSafe, onThink, opts);
     } catch (e1) {
-      // 有的服务不认某个 reasoning_effort（会返回 400）。这时候还没开始吐字，
-      // 去掉该参数重试是安全的，不会把内容重复推给前端。
+      // 有的服务不认 reasoning_effort / tool_choice（返回 400）。这时还没开始吐字，
+      // 去掉这些参数重试是安全的，不会把内容重复推给前端。
       if (/HTTP 400/.test(String(e1.message || e1))) {
-        console.log('ai explain: reasoning_effort=' + effort + ' 不被支持，去掉后重试');
-        model = await streamChat(cfg, messages, onDelta, onThink, null);
+        console.log('ai explain: 参数不被支持（effort=' + effort + ' toolChoice=' +
+          (opts.toolChoice || '-') + '），去掉后重试');
+        model = await streamChat(cfg, messages, onDeltaSafe, onThink, { effort: null });
       } else {
         throw e1;
       }
     }
     setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000, lastError: null, generated: status.generated + 1 });
-    return { model: model };
+    return { model: model, toolRounds: rounds };
   } catch (e) {
     // 模型名不对时自动换一个可用的再试一次
     if (isModelError(e)) {
@@ -414,9 +705,9 @@ async function explainMetric(payload, onDelta, onThink) {
         const alt = models.filter((m) => m !== cfg.model)[0];
         if (alt) {
           console.log(`ai explain: 模型 ${cfg.model} 不可用，自动改用 ${alt}`);
-          const model = await streamChat(Object.assign({}, cfg, { model: alt }), messages, onDelta, onThink, effort);
+          const model = await streamChat(Object.assign({}, cfg, { model: alt }), messages, onDeltaSafe, onThink, opts);
           setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000, lastError: null, generated: status.generated + 1 });
-          return { model: model };
+          return { model: model, toolRounds: rounds };
         }
       } catch (e2) {
         // 换模型也失败，落到下面统一报错
@@ -427,4 +718,7 @@ async function explainMetric(payload, onDelta, onThink) {
   }
 }
 
-module.exports = { loadConfig, narrate, probe, status, listModels, explainMetric };
+module.exports = {
+  loadConfig, narrate, probe, status, listModels, explainMetric,
+  TOOLS, runTool, summarizeToolResult, toolChat,
+};

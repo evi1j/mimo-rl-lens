@@ -106,8 +106,10 @@ async function mainFlow() {
   const statusEl = doc.getElementById('gl-ai-status');
   check('生成中显示状态提示', !!statusEl && !statusEl.hidden,
     statusEl ? String(statusEl.hidden) : 'no node');
-  check('思考阶段输出框是占位态（不是空白）',
-    !!out && /is-wait/.test(out.className) && /正在思考/.test(out.textContent),
+  // 开讲后先跑工具轮（AI 自己查数据），再思考、再写正文，所以占位文案
+  // 会是「正在准备…」→「正在查阅数据…」→「正在思考…」之一，不能写死某一种
+  check('生成中输出框是占位态（不是空白）',
+    !!out && /is-wait/.test(out.className) && /^AI 正在/.test(String(out.textContent || '')),
     out ? out.className + ' | ' + JSON.stringify(String(out.textContent).slice(0, 24)) : '');
 
   // 采样：每 250ms 记一次文本，收集递增的中间态
@@ -116,6 +118,7 @@ async function mainFlow() {
   const t0 = Date.now();
   const thinkEl = doc.getElementById('gl-ai-think');
   let sawThink = false, sawLive = false, titleThinking = '', titleWriting = '';
+  let sawTool = false, toolRows = 0;
   while (Date.now() - t0 < 150000) {
     await sleep(250);
     const o = doc.getElementById('gl-ai-out');
@@ -134,6 +137,12 @@ async function mainFlow() {
       if (txt && !titleWriting) titleWriting = tt ? tt.textContent : '';
     }
     if (te && !te.hidden && te.textContent) sawThink = true;
+    // AI 自己调的查询工具，前端要逐条显示出来（否则那十几秒是空白）
+    const tbx = doc.getElementById('gl-ai-tools');
+    if (tbx && !tbx.hidden) {
+      sawTool = true;
+      toolRows = tbx.querySelectorAll('.gl-ai-tool').length;
+    }
     const b = doc.querySelector('.gl-ai-btn[data-ai="dynsam/avg@n"]');
     const done = (b && b.textContent === '重新生成') ||
                  (o && /is-err/.test(o.className));
@@ -153,6 +162,9 @@ async function mainFlow() {
     console.log('    首帧:', JSON.stringify(String(snaps[0]).slice(0, 30)));
     console.log('    末帧:', JSON.stringify(String(finalTxt).slice(0, 60)));
   }
+
+  check('AI 查过的工具在页面上逐条显示', sawTool && toolRows > 0,
+    '可见=' + sawTool + ' 行数=' + toolRows);
 
   /* 思考阶段的状态提示：转圈 + 标题改字，正文开始后改回来 */
   check('思考阶段有转圈标记 is-live', sawLive);

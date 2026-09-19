@@ -321,8 +321,9 @@ const server = http.createServer(async (req, res) => {
       const out = await llm.explainMetric(
         payload,
         function (t) { return send({ delta: t }); },
-        function (t) { return send({ think: t }); });
-      send({ done: true, model: out.model });
+        function (t) { return send({ think: t }); },
+        function (info) { return send({ tool: info }); }); // AI 查了什么，前端实时显示
+      send({ done: true, model: out.model, toolRounds: out.toolRounds || 0 });
     } catch (e) {
       send({ error: String(e.message || e).slice(0, 300) });
     }

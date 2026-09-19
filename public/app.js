@@ -551,6 +551,15 @@
      两者分开显示，避免「哪些是写死的、哪些是模型说的」混在一起看不清。 */
   var glTab = "fixed";
 
+  /* AI 自己调的查询工具，显示时换成中文，让「它在查什么」一眼可读 */
+  var TOOL_ZH = {
+    list_metrics: "检索指标",
+    query_series: "查历史序列",
+    run_status: "查训练状态",
+    query_bench: "查评测分数",
+  };
+  function toolZh(name) { return TOOL_ZH[name] || name || "查询"; }
+
   function glStatOf(ss, runKey) {
     for (var i = 0; i < ss.length; i++) {
       if (ss[i].key !== runKey) continue;
@@ -776,8 +785,16 @@
     if (st && st.status === "done") text = st.text;
     else if (st && st.status === "error") { text = st.err || "生成失败"; cls += " is-err"; }
     var think = st && st.think ? st.think : "";
+    var tools = st && st.tools && st.tools.length ? st.tools : null;
     var hint = st ? "" : '<p class="gl-ai-tip">模型会读取这个指标此刻的真实数据后开讲，' +
                          "内容跟着数据走，不是背好的固定文案。</p>";
+    var toolsHtml = '<div class="gl-ai-tools" id="gl-ai-tools"' + (tools ? "" : " hidden") + ">" +
+      (tools ? tools.map(function (t) {
+        return '<div class="gl-ai-tool">' +
+                 '<span class="gl-ai-tool-n">' + esc(toolZh(t.name)) + "</span>" +
+                 '<span class="gl-ai-tool-s">' + esc(t.summary || "") + "</span>" +
+               "</div>";
+      }).join("") : "") + "</div>";
     return '<div class="gl-ai">' +
              glNowHtml(key, c) +
              '<div class="gl-ai-bar">' +
@@ -787,6 +804,7 @@
                  (st && st.model ? esc(st.model) : "") + "</span>" + why +
              "</div>" +
              hint +
+             toolsHtml +
              '<details class="gl-ai-think" id="gl-ai-think"' +
                (glAiThinkOpen ? " open" : "") + (think ? "" : " hidden") + ">" +
                "<summary>" +
@@ -813,6 +831,7 @@
         text: String(glAiBuf.acc).replace(/^[\s　]+/, ""),
         think: glAiBuf.think,
         model: glAiBuf.model,
+        tools: glAiBuf.tools,
       };
     }
     glAiBuf = null;
@@ -826,19 +845,40 @@
 
     var token = ++glAiToken;
     glAiBusy = true;
-    glAiBuf = { key: key, acc: "", think: "", model: "", err: "", started: false };
+    glAiBuf = { key: key, acc: "", think: "", model: "", err: "", started: false, tools: [] };
     glAi[key] = null;
+    var toolsBox = $("gl-ai-tools");
+    if (toolsBox) { toolsBox.hidden = true; toolsBox.textContent = ""; }
 
-    // 思考阶段正文还没开始，先给一句占位——空白框会让人以为卡住了
+    // 工具轮在最前面（模型先查数据），所以初始占位不能写成「正在思考」
     out.hidden = false;
     out.className = "gl-ai-out is-wait";
-    out.textContent = "AI 正在思考，想清楚后开始输出…";
+    out.textContent = "AI 正在准备…";
     if (thinkEl) {
       thinkEl.hidden = true;
       var tb = thinkEl.querySelector(".gl-ai-think-b");
       if (tb) tb.textContent = "";
     }
     if (statusEl) { statusEl.hidden = false; statusEl.textContent = "AI 正在读取当前数据…"; }
+
+    /* AI 每次调用工具都追加一行，让「它查了什么、查到没有」可见。
+       否则工具轮那十几秒用户只能对着空白框干等，以为卡住了。 */
+    function addToolRow(info) {
+      var box = $("gl-ai-tools");
+      if (!box) return;
+      box.hidden = false;
+      var row = document.createElement("div");
+      row.className = "gl-ai-tool";
+      var n = document.createElement("span");
+      n.className = "gl-ai-tool-n";
+      n.textContent = toolZh(info && info.name);
+      var s = document.createElement("span");
+      s.className = "gl-ai-tool-s";
+      s.textContent = (info && info.summary) || "";
+      row.appendChild(n);
+      row.appendChild(s);
+      box.appendChild(row);
+    }
 
     /* 思考中把折叠标题改成「正在思考…」并转圈，思考结束改回静态标题。
        这样收起状态下也能一眼看出在干什么，而不是一个空白框。 */
@@ -885,7 +925,7 @@
         // 模型爱在正文开头吐几个换行，pre-wrap 下会显示成空白行，去掉
         var txt = String(buf.acc).replace(/^[\s　]+/, "");
         out.textContent = txt;
-        glAi[key] = { status: "done", text: txt, think: buf.think, model: buf.model };
+        glAi[key] = { status: "done", text: txt, think: buf.think, model: buf.model, tools: buf.tools };
         var mEl = $("gl-ai-model");
         if (mEl && buf.model) mEl.textContent = buf.model;
         var btn = document.querySelector('.gl-ai-btn[data-ai="' + key + '"]');
@@ -922,8 +962,20 @@
               if (statusEl) statusEl.textContent = "AI 正在写…";
               out.textContent = b.acc;
               follow();
+            } else if (j.tool) {
+              var ti = j.tool || {};
+              b.tools.push({ name: ti.name, args: ti.args, summary: ti.summary });
+              addToolRow(ti);
+              if (statusEl) {
+                statusEl.hidden = false;
+                statusEl.textContent = "AI 正在" + toolZh(ti.name) + "…";
+              }
+              if (!b.started) out.textContent = "AI 正在查阅数据…";
+              follow();
             } else if (j.think) {
               b.think += j.think;
+              if (!b.started) out.textContent = "AI 正在思考，想清楚后开始输出…";
+              if (statusEl) { statusEl.hidden = false; statusEl.textContent = "AI 正在思考…"; }
               if (thinkEl) {
                 if (thinkEl.hidden) { thinkEl.hidden = false; setThinking(true); }
                 var tbb = thinkEl.querySelector(".gl-ai-think-b");

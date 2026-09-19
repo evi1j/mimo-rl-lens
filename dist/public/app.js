@@ -207,6 +207,7 @@
         state.lastOk = Date.now();
         render();
         setLive(true);
+        if (glCur) renderGlossary(glCur, true);
       })
       .catch(function (err) {
         var msg = String(err && err.message ? err.message : err);
@@ -610,9 +611,10 @@
            glSec("18 个训练指标", '<div class="gl-idx">' + mets + "</div>");
   }
 
-  function renderGlossary(key) {
+  function renderGlossary(key, keepScroll) {
     var drawer = $("gl-drawer"), mask = $("gl-mask"), body = $("gl-body");
     if (!drawer || !body) return;
+    var savedScroll = keepScroll ? body.scrollTop : 0;
     glCur = key;
     var G = GLOSSARY;
 
@@ -677,7 +679,7 @@
 
     drawer.hidden = false;
     mask.hidden = false;
-    body.scrollTop = 0;
+    body.scrollTop = keepScroll ? savedScroll : 0;
   }
 
   function closeGlossary() {

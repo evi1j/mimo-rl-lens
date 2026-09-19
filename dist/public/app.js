@@ -859,7 +859,7 @@
 
     var token = ++glAiToken;
     glAiBusy = true;
-    glAiBuf = { key: key, acc: "", think: "", plan: "", model: "", err: "", started: false, tools: [] };
+    glAiBuf = { key: key, acc: "", think: "", plan: "", model: "", err: "", started: false, tools: [], planDeciding: true };
     glAi[key] = null;
     var toolsBox = $("gl-ai-tools");
     if (toolsBox) { toolsBox.hidden = true; toolsBox.textContent = ""; }
@@ -944,12 +944,16 @@
       setThinking(false); // 收尾时一定把转圈和「正在思考」撤掉
       setPlanning(false);
       out.className = "gl-ai-out" + (buf.err ? " is-err" : "");
+      // 模型爱在正文开头吐几个换行，pre-wrap 下会显示成空白行，去掉
+      var txt = buf.err ? "" : String(buf.acc).replace(/^[\s　]+/, "");
+      // 兜底：推理型模型有时会只输出 thinking、content 里只有空白。
+      // 这时候给观众看空白框没有意义，把分析阶段的思考内容当正文呈现，
+      // 至少把思路讲出来。思考框本身仍保留完整版。
+      if (!txt && !buf.err && buf.think) txt = String(buf.think).replace(/^[\s　]+/, "");
       if (buf.err) {
         out.textContent = buf.err;
         glAi[key] = { status: "error", err: buf.err };
-      } else if (buf.acc) {
-        // 模型爱在正文开头吐几个换行，pre-wrap 下会显示成空白行，去掉
-        var txt = String(buf.acc).replace(/^[\s　]+/, "");
+      } else if (txt) {
         out.textContent = txt;
         glAi[key] = { status: "done", text: txt, think: buf.think, plan: buf.plan, model: buf.model, tools: buf.tools };
         var mEl = $("gl-ai-model");
@@ -990,8 +994,26 @@
               follow();
             } else if (j.tool) {
               var ti = j.tool || {};
+              // 第一个工具调用出现后，决策从「想」进入「做」阶段：标题从
+              // "正在决定查什么…" 改回 "查询决策"，撤掉转圈。后续 plan 思考
+              // 继续追加到这个框里，但不再显示为决策中。
+              if (b.planDeciding) {
+                b.planDeciding = false;
+                setPlanning(false);
+              }
               b.tools.push({ name: ti.name, args: ti.args, summary: ti.summary });
               addToolRow(ti);
+              /* 「决策 → 调用」会重复好几轮：模型想一步、查一步，看到结果再想下一步。
+                 所以往决策思考里插一条「已调用」标记，让它变成
+                   想：… → 已调用 X → 想：… → 已调用 Y
+                 否则多轮决策全堆在一起，跟下面的调用列表对不上号。 */
+              b.plan += (b.plan ? "\n\n" : "") + "── 已调用 " + toolZh(ti.name) + " ──\n";
+              if (planEl) {
+                planEl.hidden = false;
+                var pbx2 = planEl.querySelector(".gl-ai-think-b");
+                if (pbx2) pbx2.textContent = b.plan;
+                followBox(planEl, true);
+              }
               if (statusEl) {
                 statusEl.hidden = false;
                 statusEl.textContent = "AI 正在" + toolZh(ti.name) + "…";
@@ -1023,6 +1045,11 @@
                 var tbb = box.querySelector(".gl-ai-think-b");
                 if (tbb) tbb.textContent = boxTxt;
                 followBox(box, !b.started); // 生成阶段强制贴底，正文开始后只在贴底时跟随
+                // 一旦分析思考出现，说明决策阶段一定结束了：撤掉查询决策的转圈
+                if (!isPlan && b.planDeciding) {
+                  b.planDeciding = false;
+                  setPlanning(false);
+                }
               }
             } else if (j.done) {
               b.model = j.model || "";

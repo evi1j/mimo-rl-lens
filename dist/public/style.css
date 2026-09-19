@@ -671,6 +671,39 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
   white-space: pre-wrap; line-height: 1.6; font-size: 11.5px;
 }
 
+/* ---------- 滚动条统一风格（避免系统默认白/灰条） ---------- */
+.gl-body::-webkit-scrollbar,
+.gl-ai-think-b::-webkit-scrollbar,
+.gl-ai-out::-webkit-scrollbar,
+.list::-webkit-scrollbar,
+.nar-feed::-webkit-scrollbar { width: 7px; height: 7px; }
+
+.gl-body::-webkit-scrollbar-track,
+.gl-ai-think-b::-webkit-scrollbar-track,
+.gl-ai-out::-webkit-scrollbar-track,
+.list::-webkit-scrollbar-track,
+.nar-feed::-webkit-scrollbar-track { background: transparent; }
+
+.gl-body::-webkit-scrollbar-thumb,
+.gl-ai-think-b::-webkit-scrollbar-thumb,
+.gl-ai-out::-webkit-scrollbar-thumb,
+.list::-webkit-scrollbar-thumb,
+.nar-feed::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--dim-2) 70%, transparent);
+  border-radius: 999px;
+}
+.gl-body::-webkit-scrollbar-thumb:hover,
+.gl-ai-think-b::-webkit-scrollbar-thumb:hover,
+.gl-ai-out::-webkit-scrollbar-thumb:hover,
+.list::-webkit-scrollbar-thumb:hover,
+.nar-feed::-webkit-scrollbar-thumb:hover { background: var(--dim-2); }
+
+/* Firefox */
+.gl-body, .gl-ai-think-b, .gl-ai-out, .list, .nar-feed {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--dim-2) 70%, transparent) transparent;
+}
+
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .layout { grid-template-columns: 1fr; }

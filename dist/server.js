@@ -184,6 +184,47 @@ async function aiPass() {
   }
 }
 
+/* ---------- 指标仓库落盘（给 AI 查询工具备数据） ----------
+   pins 序列 + 评测分数 + 训练状态。上游 api/series 每次返回的是「全量历史」，
+   所以第一次运行就把 step 1~N 全部回填了，不需要单独写回填逻辑；
+   之后只在 step 变化时重抓一次，避免每 20s 都打上游。 */
+let lastArchiveSig = '';
+
+async function archivePoll(meta, runs, state) {
+  const pins = (meta && meta.pins) || [];
+  const sig = runs.map((k) => {
+    const st = state && state.status && state.status[k];
+    return k + ':' + (st && st.step ? st.step.last : '');
+  }).join(',');
+  if (sig === lastArchiveSig) return 0; // step 没变，序列也不会变
+  lastArchiveSig = sig;
+
+  let n = 0;
+  if (pins.length) {
+    const tagList = encodeURIComponent(pins.join(','));
+    for (const k of runs) {
+      try {
+        const s = await fetchUpstream('api/series?run=' + k + '&tags=' + tagList);
+        n += store.saveSeries(k, s.steps || [], s.walls || [], s.series || {});
+      } catch (e) { /* 单个 run 失败不影响其它 */ }
+    }
+    store.saveTagMeta(pins, runs, {
+      pins: pins,
+      descriptions: (meta && meta.descriptions) || {},
+      formats: (meta && meta.formats) || [],
+    });
+  }
+  try {
+    n += store.saveBench(await fetchUpstream('api/benchmarks'));
+  } catch (e) { /* 评测拿不到也不影响指标 */ }
+  runs.forEach((k) => {
+    const st = state && state.status && state.status[k];
+    if (st) store.saveRunState(k, st);
+  });
+  if (n) console.log(`archive: 已落库 ${n} 行（series/bench）`);
+  return n;
+}
+
 async function narratorPoll() {
   try {
     const meta = await fetchUpstream('api/runs');
@@ -201,6 +242,7 @@ async function narratorPoll() {
     lastBrief = buildBrief(state);
     if (engine.isDirty()) saveLog();
     store.saveMetrics(state); // 原始指标落库（内部做变化去重）
+    archivePoll(meta, keys, state); // 指标序列/评测/状态落库（不 await，避免拖慢轮询）
     aiPass(); // 不 await：AI 慢也不该拖住监控轮询
   } catch (e) {
     // 上游偶发失败时静默跳过，下一轮重试
@@ -288,6 +330,70 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* 指标序列：照常代理，顺手把结果存一份进本地库。
+     这样在指标库里浏览过的指标会自动缓存，AI 查询工具就有数据可查了。 */
+  if (p === '/api/series') {
+    try {
+      const body = await fetchUpstream('api/series' + (url.search || ''));
+      // 落库失败绝不能影响正常返回——它只是旁路缓存，不是主流程
+      try {
+        const run = url.searchParams.get('run');
+        if (run && body && body.series) {
+          store.saveSeries(run, body.steps || [], body.walls || [], body.series);
+        }
+      } catch (e) { console.warn('archive: series 落库失败', e.message); }
+      sendJSON(res, 200, body);
+    } catch (err) {
+      sendJSON(res, 502, { error: String(err.message || err) });
+    }
+    return;
+  }
+
+  // 评测分数：同样边代理边落库
+  if (p === '/api/benchmarks') {
+    try {
+      const body = await fetchUpstream('api/benchmarks' + (url.search || ''));
+      try { store.saveBench(body); } catch (e) { console.warn('archive: bench 落库失败', e.message); }
+      sendJSON(res, 200, body);
+    } catch (err) {
+      sendJSON(res, 502, { error: String(err.message || err) });
+    }
+    return;
+  }
+
+  /* 本地指标仓库查询（给 AI 查询工具用）
+       /api/db/series?run=pro&tag=dynsam/avg@n&from=10
+       /api/db/tags?q=dynsam&limit=50          （空 q 返回 pinned 指标）
+       /api/db/bench?bench=deepswe&run=pro     （都不传返回评测字典） */
+  if (p === '/api/db/series') {
+    const tag = url.searchParams.get('tag');
+    if (!tag) { sendJSON(res, 400, { error: '缺少 tag' }); return; }
+    const from = url.searchParams.get('from');
+    sendJSON(res, 200, {
+      run: url.searchParams.get('run'), tag: tag,
+      rows: store.querySeries(
+        url.searchParams.get('run'), tag, from != null ? Number(from) : null
+      ),
+    });
+    return;
+  }
+
+  if (p === '/api/db/tags') {
+    sendJSON(res, 200, {
+      q: url.searchParams.get('q') || '',
+      rows: store.searchTags(url.searchParams.get('q'), { limit: url.searchParams.get('limit') }),
+    });
+    return;
+  }
+
+  if (p === '/api/db/bench') {
+    sendJSON(res, 200, {
+      bench: url.searchParams.get('bench'), run: url.searchParams.get('run'),
+      rows: store.queryBench(url.searchParams.get('bench'), url.searchParams.get('run')),
+    });
+    return;
+  }
+
   // 本地存档统计（SQLite）
   if (p === '/api/db/stats') {
     sendJSON(res, 200, store.stats());
@@ -360,6 +466,9 @@ server.listen(PORT, HOST, () => {
   const s = store.stats();
   if (s.enabled) {
     console.log(`sqlite: data/board.db · 指标 ${s.metrics} 条 · 解说 ${s.narrator} 条 · ${(s.sizeBytes / 1024).toFixed(0)} KB`);
+    console.log(`sequence: series ${s.series} 行 / ${s.seriesTags} 个指标（最新 step ${s.seriesMaxStep}）· 评测 ${s.bench} 行 · 状态 ${s.runState} 行`);
+    store.checkpoint(); // 启动时先把攒着的 WAL 收回去
+    setInterval(function () { store.checkpoint(); }, 300000); // 之后每 5 分钟收一次
   }
   console.log(`narrator engine: 每 ${NARRATOR_MS / 1000}s 记录一次`);
 

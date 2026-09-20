@@ -3,6 +3,7 @@
  *
  *   node tools/sync-dist.js            同步（打印改了哪些文件）
  *   node tools/sync-dist.js --check    只检查不同步，有差异就退出码 1（给 hook/CI 用）
+ *   node tools/sync-dist.js --config   顺带把本机 config.json 的新配置项提取进模板
  *   node tools/sync-dist.js --zip      同步完顺手打包 dist.zip
  *
  * 规矩：
@@ -102,7 +103,33 @@ function configGuard() {
 }
 const guardMsg = configGuard();
 
+/* 配置项也要跟上：改了 config.json 加新字段，模板(config.example.json)和
+   分发版配置(dist/config.json)都不知道。这里只提醒，不自动写——
+   写入会动模板文件，留给人显式跑 --config 决定。 */
+function configTemplate() {
+  const tool = path.join(__dirname, 'gen-config-example.js');
+  if (!fs.existsSync(tool)) return null;
+  let out = '';
+  try {
+    if (argv.includes('--config')) {
+      out = execFileSync(process.execPath, [tool], { cwd: ROOT, encoding: 'utf8' });
+      return out.trim();
+    }
+    execFileSync(process.execPath, [tool, '--check'], { cwd: ROOT, encoding: 'utf8' });
+    return null;
+  } catch (e) {
+    // 退出码 1 = 模板落后于本机 config.json
+    const s = String((e && e.stdout) || '');
+    return s.trim() || null;
+  }
+}
+const cfgMsg = configTemplate();
+
 const n = changed.length + added.length + removed.length;
+
+function say(msg, prefix) {
+  String(msg).split('\n').forEach(function (l) { if (l.trim()) console.log(prefix + l.trim()); });
+}
 
 if (CHECK) {
   if (n === 0) {
@@ -114,6 +141,7 @@ if (CHECK) {
     removed.forEach(function (f) { console.log('  删  ' + f); });
   }
   if (guardMsg) console.log('  · ' + guardMsg);
+  if (cfgMsg) say(cfgMsg, '  · ');
   process.exit(n === 0 ? 0 : 1);
 }
 
@@ -126,6 +154,7 @@ if (n === 0) {
   removed.forEach(function (f) { console.log('  删  ' + f); });
 }
 if (guardMsg) console.log('· ' + guardMsg);
+if (cfgMsg) say(cfgMsg, '· ');
 
 if (ZIP) {
   const out = path.join(ROOT, 'dist.zip');

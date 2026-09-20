@@ -8,6 +8,8 @@
     "sync": "node tools/sync-dist.js",
     "sync:check": "node tools/sync-dist.js --check",
     "sync:zip": "node tools/sync-dist.js --zip",
+    "config:check": "node tools/gen-config-example.js --check",
+    "config:example": "node tools/gen-config-example.js",
     "test": "node tools/store-test.js && node tools/ai-retry-test.js && node tools/metrics-test.js && node tools/glossary-test.js && node tools/views-test.js && node tools/ai-tool-test.js && node tools/ai-explain-test.js && node tools/ai-retry-ui-test.js && node tools/dom-test.js"
   }
 }

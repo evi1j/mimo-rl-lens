@@ -9,10 +9,33 @@ const { createEngine } = require('./public/narrator-core.js');
 const llm = require('./llm.js');
 const store = require('./store.js');
 
-const PORT = Number(process.env.PORT || 8787);
+/* 端口与监听地址从 config.json 的 server 段读，环境变量可临时覆盖。
+   优先级：环境变量 > config.json > 内置默认。
+   环境变量放最高是 Unix 惯例：换端口试试时不必改文件（PORT=8799 node server.js）。
+   配置项写错（比如端口写成 80abc）不致命，回退默认值并在启动时提示。 */
+function loadServerConfig() {
+  let file = {};
+  try {
+    file = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+  } catch (e) {
+    // 配置文件缺失或损坏都不致命，走默认值
+  }
+  const s = (file && file.server) || {};
+  let port = Number(process.env.PORT || s.port || 8787);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.log('[配置] server.port 不是合法端口（' + (s.port || process.env.PORT) +
+      '），回退 8787');
+    port = 8787;
+  }
+  const host = String(process.env.HOST || s.host || '0.0.0.0').trim() || '0.0.0.0';
+  return { port: port, host: host };
+}
+
+const SERVER_CFG = loadServerConfig();
+const PORT = SERVER_CFG.port;
 // 0.0.0.0 = 监听所有网卡，局域网/虚拟局域网内的其他设备才能访问。
-// 只想本机访问的话，启动时加 HOST=127.0.0.1 覆盖。
-const HOST = process.env.HOST || '0.0.0.0';
+// 只想本机访问的话，config.json 里写 "host": "127.0.0.1"，或启动时加 HOST=127.0.0.1 覆盖。
+const HOST = SERVER_CFG.host;
 const UPSTREAM = 'https://mimo.xiaomi.com/rl/';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DATA_DIR = path.join(__dirname, 'data');

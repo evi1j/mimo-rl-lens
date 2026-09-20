@@ -21,7 +21,13 @@
 
 启动后自动打开 http://127.0.0.1:8787 。关闭终端窗口即停止服务。
 
-换端口：`PORT=8899 node server.js`，然后访问对应地址。
+**换端口**：编辑本目录下的 `config.json`，改 `server` 段，保存后重启：
+
+```json
+{ "server": { "port": 8899, "host": "0.0.0.0" } }
+```
+
+临时换一次不想改文件，就用环境变量（优先级更高）：`PORT=8899 node server.js`。
 
 ## 用其他设备访问（手机 / 另一台电脑）
 
@@ -134,7 +140,9 @@ GRPO 的组内相对优势、`advantage=(r−mean)/std`、全对/全错时组内
 
 - **页面显示「连接失败」** —— 服务没在跑，重新双击启动脚本。
 - **提示需要 Node 22.5+** —— Node 版本太低，升级后重试。
-- **8787 端口被占用** —— 换端口启动：`PORT=8899 node server.js`。
+- **8787 端口被占用** —— 换端口：改 `config.json` 的 `server.port` 后重启，
+  或临时用 `PORT=8899 node server.js`（环境变量优先，不用改文件）。
+- **只想自己能访问** —— 把 `config.json` 里 `server.host` 改成 `127.0.0.1` 并重启。
 - **图表空白 / 数据不更新** —— 检查能否访问 https://mimo.xiaomi.com/rl/ 。
 - **双击 .command 提示「无法打开」** —— macOS 安全限制，右键该文件选「打开」；
   或在终端执行 `chmod +x start.command` 后再运行。

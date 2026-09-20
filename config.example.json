@@ -1,5 +1,10 @@
 {
   "_comment": "配置模板。真实配置是 config.json（已被 .gitignore 排除，因为里面会写 API key）。用法：cp config.example.json config.json，然后按需填写。文件缺失时服务也能启动，会自动用内置默认值 + 规则引擎解说。",
+  "server": {
+    "_comment": "服务监听的端口与地址，改完重启生效。host 填 0.0.0.0 允许局域网内其他设备访问，填 127.0.0.1 只许本机。环境变量 PORT / HOST 优先级更高，可临时覆盖（PORT=8799 node server.js）。",
+    "port": 8787,
+    "host": "0.0.0.0"
+  },
   "llm": {
     "enabled": false,
     "baseUrl": "http://127.0.0.1:8090/v1",

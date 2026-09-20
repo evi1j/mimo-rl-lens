@@ -214,7 +214,18 @@ async function mainFlow() {
   const thinkNode = doc.getElementById('gl-ai-think');
   check('思考过程是 details 可折叠', thinkNode && thinkNode.tagName === 'DETAILS',
     thinkNode ? thinkNode.tagName : '找不到节点');
-  check('思考排在正文之前', !!thinkNode && thinkNode.nextElementSibling === finalOut);
+  /* 「之前」要按文档顺序判断，不能直接比 nextElementSibling：
+     发生重跑时，重跑前那份内容会收成折叠块留在正文上方（思考框与正文之间），
+     这时思考的下一个兄弟就不是正文了，但顺序仍然是对的。 */
+  const FOLLOWING = 4; // Node.DOCUMENT_POSITION_FOLLOWING
+  const thinkBeforeOut = !!thinkNode && !!finalOut &&
+    !!(thinkNode.compareDocumentPosition(finalOut) & FOLLOWING);
+  check('思考排在正文之前', thinkBeforeOut,
+    thinkNode && finalOut
+      ? '思考之后的节点：' + Array.prototype.slice.call(thinkNode.parentNode.children)
+          .slice(Array.prototype.indexOf.call(thinkNode.parentNode.children, thinkNode) + 1)
+          .map(function (el) { return el.id || el.className; }).join(' → ')
+      : '缺少节点');
   if (thinkNode) {
     check('思考默认收起', !thinkNode.hasAttribute('open'));
     check('有可点击的折叠标题', !!thinkNode.querySelector('summary'));

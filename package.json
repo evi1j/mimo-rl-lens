@@ -11,7 +11,7 @@
     "build:zip": "node tools/sync-dist.js --zip",
     "config:example": "node tools/gen-config-example.js",
     "config:check": "node tools/gen-config-example.js --check",
-    "test": "node tools/store-test.js && node tools/ai-retry-test.js && node tools/metrics-test.js && node tools/glossary-test.js && node tools/views-test.js && node tools/ai-tool-test.js && node tools/ai-explain-test.js && node tools/ai-retry-ui-test.js && node tools/dom-test.js"
+    "test": "node tools/store-test.js && node tools/ai-retry-test.js && node tools/metrics-test.js && node tools/glossary-test.js && node tools/views-test.js && node tools/ai-tool-test.js && node tools/ai-explain-test.js && node tools/ai-retry-ui-test.js && node tools/dom-test.js && node tools/server-config-test.js"
   },
   "_note": "build* 只管生成 dist/（打包分发时才跑，提交代码不触发）；config:* 由提交钩子自动跑，也可手动补模板"
 }

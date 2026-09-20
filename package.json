@@ -5,11 +5,12 @@
   "description": "训练实况看板：指标曲线 + 指标讲解（固定文案 + AI 讲解）",
   "scripts": {
     "start": "node server.js",
-    "sync": "node tools/sync-dist.js",
-    "sync:check": "node tools/sync-dist.js --check",
-    "sync:zip": "node tools/sync-dist.js --zip",
-    "config:check": "node tools/gen-config-example.js --check",
+    "build": "node tools/sync-dist.js",
+    "build:check": "node tools/sync-dist.js --check",
+    "build:zip": "node tools/sync-dist.js --zip",
     "config:example": "node tools/gen-config-example.js",
+    "config:check": "node tools/gen-config-example.js --check",
     "test": "node tools/store-test.js && node tools/ai-retry-test.js && node tools/metrics-test.js && node tools/glossary-test.js && node tools/views-test.js && node tools/ai-tool-test.js && node tools/ai-explain-test.js && node tools/ai-retry-ui-test.js && node tools/dom-test.js"
-  }
+  },
+  "_note": "build* 只管生成 dist/（打包分发时才跑，提交代码不触发）；config:* 由提交钩子自动跑，也可手动补模板"
 }

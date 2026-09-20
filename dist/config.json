@@ -9,6 +9,11 @@
     "timeoutMs": 180000,
     "maxTokens": 4000,
     "reasoningEffort": "",
-    "maxItemsPerPoll": 3
+    "maxItemsPerPoll": 3,
+    "_retry": "讲解链路的分层重试。讲解分两段：工具轮查数据、正文轮写讲解；任一段都可能被网络抖动、上游 5xx、思考吃满额度（正文空）、流中途断连打断。这里分别重试，不整条重来，已查到的数据不会白查一遍",
+    "retryMax": 2,
+    "bodyAttempts": 3,
+    "enoughChars": 200,
+    "retryBackoffMs": 800
   }
 }

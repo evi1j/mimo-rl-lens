@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-/* 把源码同步到 dist/ —— 手动 cp 容易漏文件，也容易误覆盖 dist 独有的东西。
+/* 构建 dist/ —— 只在要打包分发时才跑，平时提交代码不碰它。
+ * （源码的版本管理 与 部署产物的生成 是两件事，别再绑在提交钩子上。）
  *
- *   node tools/sync-dist.js            同步（打印改了哪些文件）
- *   node tools/sync-dist.js --check    只检查不同步，有差异就退出码 1（给 hook/CI 用）
- *   node tools/sync-dist.js --config   顺带把本机 config.json 的新配置项提取进模板
- *   node tools/sync-dist.js --zip      同步完顺手打包 dist.zip
+ *   node tools/sync-dist.js            构建（打印改了哪些文件）
+ *   node tools/sync-dist.js --check    只检查 dist 是否落后于源码（退出码 1 = 落后）
+ *   node tools/sync-dist.js --zip      构建完打包 dist.zip
  *
  * 规矩：
- *   1. dist/config.json 是脱敏版（enabled=false、key 留空），永远不覆盖 ——
- *      本机 config.json 里有真实 key，复制过去等于泄露。
+ *   1. dist/config.json 由 config.example.json 脱敏生成（enabled=false、密钥留空），
+ *      绝不复制本机 config.json —— 那里有真实 API key。
  *   2. dist/README.md、start.command、start.bat 是分发用的，源码目录没有，不动。
  *   3. public/ 整目录同步：源码里删掉的文件，dist 里也删（--no-prune 可关）。
  */
@@ -17,9 +17,15 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const cfgTool = require('./gen-config-example.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
+
+// 分发版配置里那句给使用者看的说明（dist/config.json 已存在时保留它自己的）
+const DIST_COMMENT = 'AI 解说配置。默认关闭（enabled=false）——此时解说全部由内置规则引擎生成，' +
+  '展开仍有知识点讲解，页面不会空白。接入自己的 OpenAI 兼容接口后，把 enabled 改为 true ' +
+  '并填写 baseUrl / apiKey / model 三项即可，改完无需重启服务。';
 
 // 根级要同步的文件
 const ROOT_FILES = ['llm.js', 'server.js', 'store.js', 'config.example.json'];
@@ -87,43 +93,39 @@ function syncPublic() {
 ROOT_FILES.forEach(function (f) { syncFile(f, f); });
 syncPublic();
 
-/* dist/config.json 必须保持脱敏。源文件里若开了 AI，只提醒不同步。 */
+/* dist/config.json 由模板脱敏生成 —— 绝不复制本机 config.json（那里有真实 key）。
+   模板缺的新配置项由提交钩子负责补（tools/gen-config-example.js），
+   这里只负责「把已入库的模板变成能直接跑的分发配置」。 */
+function buildDistConfig() {
+  const example = cfgTool.readJson(path.join(ROOT, 'config.example.json'));
+  if (!example) return 'config.example.json 读不到，跳过 dist/config.json 生成';
+  const dst = path.join(DIST, 'config.json');
+  const next = cfgTool.sanitize(example);
+  const old = cfgTool.readJson(dst);
+  // 分发版那句是给使用者看的，跟模板的说明不是一回事，保留它
+  next._comment = old && typeof old._comment === 'string' ? old._comment : DIST_COMMENT;
+  if (old) Object.keys(old).forEach(function (k) { if (!(k in next)) next[k] = old[k]; });
+
+  const text = JSON.stringify(next, null, 2) + '\n';
+  const cur = readIfExists(dst);
+  if (cur !== null && cur.toString('utf8') === text) { same.push('config.json'); return null; }
+  if (cur === null) added.push('config.json'); else changed.push('config.json');
+  if (!CHECK) {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.writeFileSync(dst, text);
+  }
+  return null;
+}
+const cfgBuildMsg = buildDistConfig();
+
+/* 本机 config.json 含真实 key，这里只说明不复制；新配置项该走提交钩子补模板 */
 function configGuard() {
   const srcCfg = path.join(ROOT, 'config.json');
-  const dstCfg = path.join(DIST, 'config.json');
-  if (!fs.existsSync(srcCfg)) return null;
-  let s;
-  try { s = JSON.parse(fs.readFileSync(srcCfg, 'utf8')); } catch (e) { return null; }
-  const leak = !!(s && s.llm && (s.llm.apiKey || s.llm.enabled));
-  if (!leak) return null;
-  const dstOk = fs.existsSync(dstCfg);
-  return dstOk
-    ? 'config.json 未同步（本机配置含 API key，dist 保留脱敏版）'
-    : 'config.json 未同步，且 dist/config.json 不存在 —— 请手动放一份脱敏版';
+  let s = cfgTool.readJson(srcCfg);
+  if (!s || !s.llm || !(s.llm.apiKey || s.llm.enabled)) return null;
+  return 'config.json 不进 dist（本机配置含 API key，dist 版由模板脱敏生成）';
 }
 const guardMsg = configGuard();
-
-/* 配置项也要跟上：改了 config.json 加新字段，模板(config.example.json)和
-   分发版配置(dist/config.json)都不知道。这里只提醒，不自动写——
-   写入会动模板文件，留给人显式跑 --config 决定。 */
-function configTemplate() {
-  const tool = path.join(__dirname, 'gen-config-example.js');
-  if (!fs.existsSync(tool)) return null;
-  let out = '';
-  try {
-    if (argv.includes('--config')) {
-      out = execFileSync(process.execPath, [tool], { cwd: ROOT, encoding: 'utf8' });
-      return out.trim();
-    }
-    execFileSync(process.execPath, [tool, '--check'], { cwd: ROOT, encoding: 'utf8' });
-    return null;
-  } catch (e) {
-    // 退出码 1 = 模板落后于本机 config.json
-    const s = String((e && e.stdout) || '');
-    return s.trim() || null;
-  }
-}
-const cfgMsg = configTemplate();
 
 const n = changed.length + added.length + removed.length;
 
@@ -135,26 +137,26 @@ if (CHECK) {
   if (n === 0) {
     console.log('dist 已是最新（' + same.length + ' 个文件一致）');
   } else {
-    console.log('dist 落后于源码，需要同步 ' + n + ' 个文件：');
+    console.log('dist 落后于源码，需要构建 ' + n + ' 个文件：');
     changed.forEach(function (f) { console.log('  改  ' + f); });
     added.forEach(function (f) { console.log('  增  ' + f); });
     removed.forEach(function (f) { console.log('  删  ' + f); });
   }
   if (guardMsg) console.log('  · ' + guardMsg);
-  if (cfgMsg) say(cfgMsg, '  · ');
+  if (cfgBuildMsg) say(cfgBuildMsg, '  · ');
   process.exit(n === 0 ? 0 : 1);
 }
 
 if (n === 0) {
-  console.log('dist 无需同步（' + same.length + ' 个文件一致）');
+  console.log('dist 无需构建（' + same.length + ' 个文件一致）');
 } else {
-  console.log('已同步 ' + n + ' 个文件：');
+  console.log('已构建 ' + n + ' 个文件：');
   changed.forEach(function (f) { console.log('  改  ' + f); });
   added.forEach(function (f) { console.log('  增  ' + f); });
   removed.forEach(function (f) { console.log('  删  ' + f); });
 }
 if (guardMsg) console.log('· ' + guardMsg);
-if (cfgMsg) say(cfgMsg, '· ');
+if (cfgBuildMsg) say(cfgBuildMsg, '· ');
 
 if (ZIP) {
   const out = path.join(ROOT, 'dist.zip');

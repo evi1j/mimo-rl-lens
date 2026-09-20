@@ -4,9 +4,10 @@
 
 const path = require('path');
 const store = require(path.join(__dirname, '..', 'store.js'));
-const { DatabaseSync } = require('node:sqlite');
+// 走适配层而不是直接 require('node:sqlite')：本机 Node 太旧时测试也能跑（wasm 兜底）
+const sqlite = require(path.join(__dirname, '..', 'sqlite.js'));
 
-const DB = path.join(__dirname, '..', 'data', 'board.db');
+const DB = process.env.MIMO_DB_FILE || path.join(__dirname, '..', 'data', 'board.db');
 let pass = 0;
 let fail = 0;
 
@@ -16,7 +17,7 @@ function check(name, ok, extra) {
 }
 
 function cleanup() {
-  const db = new DatabaseSync(DB);
+  const db = sqlite.open(DB).db;
   db.exec("DELETE FROM series WHERE run='__test__'");
   db.exec("DELETE FROM tag_meta WHERE tag LIKE '__test__%'");
   db.exec("DELETE FROM bench WHERE bench='__test__'");
@@ -28,7 +29,7 @@ function cleanup() {
   console.log('指标仓库测试（data/board.db）\n');
   cleanup();
 
-  const db = new DatabaseSync(DB);
+  const db = sqlite.open(DB).db;
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
 
   console.log('— 建表 —');

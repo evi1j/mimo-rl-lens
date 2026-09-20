@@ -11,7 +11,11 @@
     "build:zip": "node tools/sync-dist.js --zip",
     "config:example": "node tools/gen-config-example.js",
     "config:check": "node tools/gen-config-example.js --check",
-    "test": "node tools/store-test.js && node tools/ai-retry-test.js && node tools/metrics-test.js && node tools/glossary-test.js && node tools/views-test.js && node tools/ai-tool-test.js && node tools/ai-explain-test.js && node tools/ai-retry-ui-test.js && node tools/dom-test.js && node tools/server-config-test.js"
+    "test": "node tools/sqlite-driver-test.js && node tools/store-test.js && node tools/ai-retry-test.js && node tools/metrics-test.js && node tools/glossary-test.js && node tools/views-test.js && node tools/ai-tool-test.js && node tools/ai-explain-test.js && node tools/ai-retry-ui-test.js && node tools/dom-test.js && node tools/server-config-test.js"
   },
-  "_note": "build* 只管生成 dist/（打包分发时才跑，提交代码不触发）；config:* 由提交钩子自动跑，也可手动补模板"
+  "_note": "build* 只管生成 dist/（打包分发时才跑，提交代码不触发）；config:* 由提交钩子自动跑，也可手动补模板",
+  "optionalDependencies": {
+    "node-sqlite3-wasm": "^0.8.60"
+  },
+  "_deps_note": "正常情况用不到它：Node ≥22.5 自带 node:sqlite。只有 Node 太旧时才由它兜底（纯 wasm，无需编译），所以放在 optionalDependencies —— 装不上也不影响安装流程"
 }

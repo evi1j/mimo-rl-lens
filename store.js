@@ -1,29 +1,41 @@
-/* 本地存档层：SQLite（Node 22 内置 node:sqlite，零依赖）
+/* 本地存档层：SQLite —— 只有这一条路，不再退回 JSON
+   驱动由 sqlite.js 挑：
+     · Node ≥22.5：内置 node:sqlite，零依赖（22.5~22.12 需 --experimental-sqlite）
+     · Node 太旧：npm 包 node-sqlite3-wasm 兜底（纯 wasm，不用编译，部署机要装）
+   两个都不可用时存档停用：看板照常跑，但历史不落盘，启动日志会给出解决办法。
    存三类东西：
      1) metrics   —— 每次轮询抓到的原始指标快照（带变化去重）
      2) narrator  —— 解说流（含 AI 文案、教学段落、事件原始数值）
      3) 指标仓库  —— series / tag_meta / bench / bench_meta / run_state
         series 是窄表：指标名是「值」不是「列名」，所以上游再加指标也不用改表结构。
         这是给 AI 查询工具备的数据地基。
-   meta 表放解说引擎的其它内部状态（prev / seenNotices 等），保持 narrator.json 的行为。 */
+   meta 表放解说引擎的其它内部状态（prev / seenNotices 等）。 */
 
 const fs = require('fs');
 const path = require('path');
+const sqlite = require('./sqlite');
 
 const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'board.db');
-const LEGACY_JSON = path.join(DATA_DIR, 'narrator.json');
+// 正常情况就是 data/board.db。测试会用 MIMO_DB_FILE 指到临时库，
+// 免得不同驱动的用例互相踩（store.js 是单例，一个进程只能认一个库）。
+const DB_FILE = process.env.MIMO_DB_FILE || path.join(DATA_DIR, 'board.db');
 
 let db = null;
 let ready = false;
+let tried = false;      // 建库只试一次，失败后不再反复重试刷日志
+let driver = null;      // 'builtin' | 'wasm'
+let initError = null;   // 失败原因，给接口和页面显示
 
 /* ---------- 建库建表 ---------- */
 function init() {
-  if (db) return ready;
+  if (tried) return ready;
+  tried = true;
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    const { DatabaseSync } = require('node:sqlite');
-    db = new DatabaseSync(DB_FILE);
+    const h = sqlite.open(DB_FILE); // 两个驱动都不可用会在这里抛错，错误信息带解决办法
+    db = h.db;
+    driver = h.driver;
+    // WAL：写盘不挡读。wasm 驱动的 VFS 不支持 WAL，这条会被忽略，不影响正确性。
     db.exec('PRAGMA journal_mode = WAL');
     db.exec(`
       CREATE TABLE IF NOT EXISTS metrics (
@@ -132,41 +144,14 @@ function init() {
     // WAL 默认 1000 页才自动 checkpoint，服务常驻时容易攒到几 MB。压低一些。
     db.exec('PRAGMA wal_autocheckpoint = 256');
     ready = true;
-    migrateLegacy();
+    console.log('sqlite: 存档已就绪（驱动 ' + driver + '）');
   } catch (e) {
-    console.warn('sqlite: 初始化失败（' + e.message + '），将退回 JSON 存档');
     db = null;
     ready = false;
+    initError = String(e && e.message || e);
+    console.error('sqlite: 初始化失败，本次运行不落盘历史\n' + initError);
   }
   return ready;
-}
-
-/* 旧的 data/narrator.json 原地迁移进来，原文件改名为 .migrated 留底 */
-function migrateLegacy() {
-  try {
-    const count = db.prepare('SELECT COUNT(*) AS c FROM narrator').get().c;
-    if (count > 0 || !fs.existsSync(LEGACY_JSON)) return;
-    const old = JSON.parse(fs.readFileSync(LEGACY_JSON, 'utf8'));
-    const rows = Array.isArray(old.feed) ? old.feed : [];
-    const ins = db.prepare(
-      'INSERT OR REPLACE INTO narrator (id,ts,level,run,official,ai,ai_state,ai_model,ai_error,text,why,lesson,ctx)' +
-      ' VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
-    );
-    db.exec('BEGIN');
-    rows.forEach((it) => ins.run(
-      String(it.id), it.ts || 0, it.level || 'info', it.run || null,
-      it.official ? 1 : 0, it.ai ? 1 : 0, it.aiState || '', it.aiModel || '', it.aiError || '',
-      it.text || '', it.why || '', it.lesson || '', it.ctx ? JSON.stringify(it.ctx) : null
-    ));
-    const rest = {};
-    Object.keys(old).forEach((k) => { if (k !== 'feed') rest[k] = old[k]; });
-    db.prepare('INSERT OR REPLACE INTO meta (k,v) VALUES (?,?)').run('engine', JSON.stringify(rest));
-    db.exec('COMMIT');
-    fs.renameSync(LEGACY_JSON, LEGACY_JSON + '.migrated');
-    console.log(`sqlite: 已迁移 ${rows.length} 条解说（原 JSON 保留为 narrator.json.migrated）`);
-  } catch (e) {
-    console.warn('sqlite: 迁移旧 JSON 失败', e.message);
-  }
 }
 
 /* ---------- 解说 ---------- */
@@ -556,7 +541,7 @@ function searchNarrator(q, limit) {
 }
 
 function stats() {
-  if (!init()) return { enabled: false };
+  if (!init()) return { enabled: false, driver: null, reason: initError };
   try {
     const m = db.prepare('SELECT COUNT(*) AS c, MIN(ts) AS t0, MAX(ts) AS t1 FROM metrics').get();
     const n = db.prepare('SELECT COUNT(*) AS c FROM narrator').get();
@@ -568,7 +553,7 @@ function stats() {
     let size = 0;
     try { size = fs.statSync(DB_FILE).size; } catch (e) {}
     return {
-      enabled: true, file: DB_FILE, sizeBytes: size,
+      enabled: true, driver: driver, file: DB_FILE, sizeBytes: size,
       metrics: m.c, metricsFrom: m.t0, metricsTo: m.t1,
       perRun: perRun, narrator: n.c,
       series: sv.c, seriesTags: sv.tags, seriesMaxStep: sv.s1,
@@ -585,4 +570,6 @@ module.exports = {
   saveSeries, saveTagMeta, saveBench, saveRunState,
   querySeries, searchTags, queryBench, queryRunState, latestStep, checkpoint, unitFor,
   get enabled() { return init(); },
+  get driver() { return driver; },
+  get reason() { return initError; },
 };

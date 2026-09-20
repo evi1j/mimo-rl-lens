@@ -18,8 +18,9 @@ fi
 MAJOR=$("$NODE" -p "process.versions.node.split('.')[0]" 2>/dev/null)
 MINOR=$("$NODE" -p "process.versions.node.split('.')[1]" 2>/dev/null)
 if [ -z "$MAJOR" ] || [ "$MAJOR" -lt 22 ] || { [ "$MAJOR" -eq 22 ] && [ "$MINOR" -lt 5 ]; }; then
-  echo "[警告] 当前 Node 版本 $("$NODE" -v)，建议 22.5 或更高（看板依赖内置的 node:sqlite）。"
-  echo "       仍会尝试启动：低版本会自动退回 JSON 存档，看板可用，但没有 SQLite 存档与搜索功能。"
+  echo "[提示] 当前 Node 版本 $("$NODE" -v)，建议 22.5 或更高（内置 node:sqlite，什么都不用装）。"
+  echo "       仍会尝试启动：低版本会自动改用 node-sqlite3-wasm 兜底（压缩包里已带）。"
+  echo "       万一启动日志提示缺这个包，在本目录执行：npm install node-sqlite3-wasm"
   echo
 fi
 

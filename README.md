@@ -19,8 +19,10 @@
 node server.js          # 打开 http://127.0.0.1:8787
 ```
 
-零第三方依赖，**不用 npm install**。需要 Node 22.5+（用到内置的 `node:sqlite`），
-且能访问 `https://mimo.xiaomi.com/rl/`。
+存档用 SQLite，跑在 Node ≥22.5 上时**零第三方依赖，不用 npm install**
+（用内置的 `node:sqlite`）。Node 太旧时由 `node-sqlite3-wasm` 兜底
+（纯 WebAssembly，不用编译），那种机器才需要 `npm install`。
+还要能访问 `https://mimo.xiaomi.com/rl/`。
 
 第一次克隆仓库后跑一次：
 
@@ -69,6 +71,7 @@ npm run setup           # 登记 git 钩子目录（见「开发约定」）
 
 ```
 server.js        主服务：反代上游、静态托管、/api/*、流式讲解接口
+sqlite.js        SQLite 驱动适配（内置 node:sqlite / wasm 兜底，抹平 API 差异）
 store.js         SQLite 存档层（建表、落库、查询）
 llm.js           AI 客户端：工具定义、流式讲解、分层重试
 public/          前端：index.html + app.js + glossary.js（词库）+ narrator*.js（规则解说）+ style.css
@@ -117,12 +120,23 @@ cp config.example.json config.json
   并进同一笔提交。新克隆的机器要跑一次 `npm run setup` 才会生效。
 - **`dist/` 不入库**：它是构建产物，只在要打包分发时手动 `npm run build:zip` 生成。
   源码的版本管理和部署产物的生成是两件事，别再绑在一起。
-- **构建时的依赖处理**：项目零第三方依赖（只用 Node 内置模块），所以不需要
-  `node_modules`，使用者也不用 `npm install`。构建脚本要操心的是**内部模块**——
+- **构建时的依赖处理**：项目只用 Node 内置模块，唯一的第三方是**可选**兜底包
+  `node-sqlite3-wasm`（Node <22.5 的机器才用得上，见「存档驱动」）。所以正常
+  情况下不需要 `node_modules`，使用者也不用 `npm install`；构建脚本在本机装了兜底包时
+  会把它一起拷进 `dist/node_modules`，旧 Node 的机器解压即用。
+  构建脚本真正要操心的是**内部模块**——
   它从入口 `server.js` 递归解析 `require` 自动得出要拷贝哪些根级模块，
   不靠手写清单（以前写死四个文件，新加模块就会漏进 dist，一跑就 MODULE_NOT_FOUND）。
   构建完还会校验一遍：dist 里每个 `require`、页面每个 `src`/`href` 的目标文件都得存在，
-  缺了就报错并挡住打包。运行时另有 Node ≥22.5 的软要求（低版本自动退回 JSON 存档）。
+  缺了就报错并挡住打包。
+- **存档驱动**：存档只走 SQLite，没有 JSON 兜底。驱动由 `sqlite.js` 按顺序挑：
+  先试 Node 内置的 `node:sqlite`（≥22.5，零依赖）；没有就用 npm 包
+  `node-sqlite3-wasm`（纯 wasm，不需要编译环境）。两个都没有时存档停用——
+  看板照常跑，但历史不落盘，启动日志会打印「升 Node / npm install」两条路。
+  两个驱动 API 不同（wasm 版参数打包成数组、语句要手动 finalize、不支持 WAL），
+  差异都在 `sqlite.js` 里抹平，`store.js` 只当它是 `node:sqlite`。
+  wasm 版还额外处理一件事：碰到 WAL 模式的库（新 Node 跑过、或进程被强杀留下的）
+  会自动降级为普通模式打开，WAL 文件另存留底 —— 否则它连打都打不开。
 - **测试**：改完跑 `npm test`。AI 相关的测试用本地 mock 服务，不依赖外网模型。
   `server-config-test` 排在最后，它会真起服务占端口，并停掉占用 8787 的进程
   （要验证兜底端口），跑完记得重启开发服务。

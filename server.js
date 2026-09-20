@@ -38,8 +38,6 @@ const PORT = SERVER_CFG.port;
 const HOST = SERVER_CFG.host;
 const UPSTREAM = 'https://mimo.xiaomi.com/rl/';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const DATA_DIR = path.join(__dirname, 'data');
-const LOG_FILE = path.join(DATA_DIR, 'narrator.json');
 const TTL = 5000; // ms — be polite to upstream, the board polls every 10s
 const NARRATOR_MS = 20000; // 解说引擎后台轮询间隔
 
@@ -129,33 +127,27 @@ function serveStatic(res, urlPath) {
 /* ---------- 解说引擎（后台常驻，历史落盘） ---------- */
 const engine = createEngine();
 
+let saveWarned = false; // 存档不可用的提示只打一次，别每 20 秒刷一行
+
 function loadLog() {
-  // 优先 SQLite；建库失败时退回原来的 JSON 文件
-  if (store.enabled) {
-    const d = store.loadNarrator();
-    if (d) {
-      engine.hydrate(d);
-      console.log(`narrator: 已从 SQLite 恢复 ${engine.getFeed().length} 条历史解说`);
-      return;
-    }
+  // 存档只走 SQLite。驱动不可用时 store.enabled 为 false，历史不落盘但不影响看板。
+  if (!store.enabled) {
+    console.warn('narrator: 存档不可用，本次运行的历史解说不会保存');
+    return;
   }
-  try {
-    engine.hydrate(JSON.parse(fs.readFileSync(LOG_FILE, 'utf8')));
-    console.log(`narrator: 已恢复 ${engine.getFeed().length} 条历史解说（JSON）`);
-  } catch (e) {
-    // 首次运行没有历史，属正常
-  }
+  const d = store.loadNarrator();
+  if (!d) return; // 首次运行没有历史，属正常
+  engine.hydrate(d);
+  console.log(`narrator: 已恢复 ${engine.getFeed().length} 条历史解说`);
 }
 
 function saveLog() {
-  if (store.enabled && store.saveNarrator(engine.serialize())) return;
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    const tmp = LOG_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(engine.serialize()));
-    fs.renameSync(tmp, LOG_FILE);
-  } catch (e) {
-    console.warn('narrator: 写日志失败', e.message);
+  if (!store.enabled) {
+    if (!saveWarned) { saveWarned = true; console.warn('narrator: 存档不可用，跳过落盘'); }
+    return;
+  }
+  if (!store.saveNarrator(engine.serialize())) {
+    console.warn('narrator: 写入解说失败');
   }
 }
 
@@ -519,10 +511,14 @@ server.listen(PORT, HOST, () => {
   setInterval(narratorPoll, NARRATOR_MS);
   const s = store.stats();
   if (s.enabled) {
-    console.log(`sqlite: data/board.db · 指标 ${s.metrics} 条 · 解说 ${s.narrator} 条 · ${(s.sizeBytes / 1024).toFixed(0)} KB`);
+    console.log(`sqlite: data/board.db（驱动 ${s.driver}）· 指标 ${s.metrics} 条 · 解说 ${s.narrator} 条 · ${(s.sizeBytes / 1024).toFixed(0)} KB`);
     console.log(`sequence: series ${s.series} 行 / ${s.seriesTags} 个指标（最新 step ${s.seriesMaxStep}）· 评测 ${s.bench} 行 · 状态 ${s.runState} 行`);
     store.checkpoint(); // 启动时先把攒着的 WAL 收回去
     setInterval(function () { store.checkpoint(); }, 300000); // 之后每 5 分钟收一次
+  } else {
+    // 存档不可用仍让看板跑起来：实时指标、解说、AI 讲解都不依赖落盘
+    console.warn('sqlite: 存档不可用 —— 历史指标 / 解说搜索 / CSV 导出 这次都用不了');
+    console.warn(String(s.reason || '未知原因').split('\n').join('\n        '));
   }
   console.log(`narrator engine: 每 ${NARRATOR_MS / 1000}s 记录一次`);
 

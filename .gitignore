@@ -1,11 +1,9 @@
 # ── 运行时生成的数据 ────────────────────────────────
-# SQLite 数据库、WAL 日志、旧 JSON 存档，首次启动自动重建
+# SQLite 数据库、WAL 日志，首次启动自动重建（存档只走 SQLite，不再有 JSON 存档）
 data/
 *.db
 *.db-wal
 *.db-shm
-narrator.json
-narrator.json.migrated
 
 # ── 含密钥的本机配置 ────────────────────────────────
 # 本机 config.json 里有真实 API key，绝不入库。

@@ -3,13 +3,13 @@
    注意：改完需要重启看板服务，服务才会重新从库里读到新内容。
    用法：node tools/rewrite-pending.js [最多处理几条] */
 const path = require('path');
-const { DatabaseSync } = require('node:sqlite');
+const sqlite = require('../sqlite.js'); // 驱动适配：内置 node:sqlite 或 wasm 兜底
 const llm = require('../llm.js');
 
 const DB_PATH = path.join(__dirname, '..', 'data', 'board.db');
 const LIMIT = Number(process.argv[2]) || 20;
 
-const db = new DatabaseSync(DB_PATH);
+const db = sqlite.open(DB_PATH).db;
 const rows = db.prepare("SELECT * FROM narrator WHERE ai_state='pending' ORDER BY ts DESC LIMIT ?").all(LIMIT);
 console.log('待重写条目:', rows.length);
 

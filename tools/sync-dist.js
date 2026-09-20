@@ -27,9 +27,11 @@ const DIST_COMMENT = 'AI 解说配置。默认关闭（enabled=false）——此
   '展开仍有知识点讲解，页面不会空白。接入自己的 OpenAI 兼容接口后，把 enabled 改为 true ' +
   '并填写 baseUrl / apiKey / model 三项即可，改完无需重启服务。';
 
-/* ── 依赖：第三方为零，内部模块不靠手写清单 ────────────────────────
- * 本项目不用任何 npm 包（只用 http / fs / path / child_process / node:sqlite），
- * 所以没有 node_modules 要打包，使用者也不需要 npm install。
+/* ── 依赖：内部模块自动收集，第三方只有一个可选兜底包 ──────────────
+ * 本项目几乎不依赖 npm 包：存档默认用 Node 内置的 node:sqlite。
+ * 唯一的可选依赖是 node-sqlite3-wasm —— 给 Node <22.5 的机器兜底（纯 wasm，
+ * 不用编译）。本机 npm install 过就一起打进 dist/node_modules，目标机器
+ * 解压即用；没装也不影响，新版 Node 用内置驱动。
  * 真正会出错的是内部模块：以前 ROOT_FILES 是写死的四个文件，哪天新加一个根级
  * js 被 server.js require 了，构建不会带上它，dist 一跑就 MODULE_NOT_FOUND。
  * 所以改成从入口递归解析 require，并在构建后再校验一遍（见 verifyDistDeps）。 */
@@ -42,7 +44,13 @@ function stripComments(src) {
     .replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1'); // 冒号后的 // 多半是 http://，不当注释
 }
 
-/* 从入口出发递归收集本地 require 的模块（只跟相对路径，忽略内置/第三方） */
+/* 相对路径的 require 可能不带后缀（require('./sqlite')），补上 .js 再找 */
+function resolveLocal(rel) {
+  if (readIfExists(path.join(ROOT, rel)) !== null) return rel;
+  if (!path.extname(rel) && readIfExists(path.join(ROOT, rel + '.js')) !== null) return rel + '.js';
+  return rel;
+}
+
 function collectLocalDeps(entryRel, seen) {
   seen = seen || Object.create(null);
   if (seen[entryRel]) return seen;
@@ -55,7 +63,7 @@ function collectLocalDeps(entryRel, seen) {
   while ((m = re.exec(src))) {
     const base = path.dirname(entryRel);
     const rel = path.posix.normalize(base === '.' ? m[1] : base + '/' + m[1]);
-    collectLocalDeps(rel, seen);
+    collectLocalDeps(resolveLocal(rel), seen);
   }
   return seen;
 }
@@ -190,6 +198,67 @@ function configGuard() {
 }
 const guardMsg = configGuard();
 
+/* dist/package.json：只留使用者需要的部分（启动脚本 + 可选的 wasm 兜底包）。
+   存档默认走 Node 内置的 node:sqlite，什么都不用装；Node 太旧时才需要
+   node-sqlite3-wasm 兜底 —— 使用者可以在 dist 里直接 npm install 装上它。 */
+function buildDistPackage() {
+  const root = cfgTool.readJson(path.join(ROOT, 'package.json'));
+  if (!root) return 'package.json 读不到，跳过 dist/package.json 生成';
+  const next = {
+    name: root.name,
+    version: root.version,
+    private: true,
+    description: root.description,
+    scripts: { start: 'node server.js' },
+    optionalDependencies: root.optionalDependencies || {},
+  };
+  const text = JSON.stringify(next, null, 2) + '\n';
+  const dst = path.join(DIST, 'package.json');
+  const cur = readIfExists(dst);
+  if (cur !== null && cur.toString('utf8') === text) { same.push('package.json'); return null; }
+  if (cur === null) added.push('package.json'); else changed.push('package.json');
+  if (!CHECK) fs.writeFileSync(dst, text);
+  return null;
+}
+const pkgMsg = buildDistPackage();
+
+/* wasm 兜底包：本机装了（npm install）就一起打进 dist，这样 Node 太旧的机器
+   拿到 zip 解压就能跑，不用在那台机器上再联网装包。没装也不影响 —— 那些机器
+   多半是新版 Node，用内置的 node:sqlite 就够。 */
+const WASM_PKG = 'node-sqlite3-wasm';
+const WASM_FILES = [
+  'package.json',
+  'node-sqlite3-wasm.d.ts',
+  'dist/node-sqlite3-wasm.js',
+  'dist/node-sqlite3-wasm.wasm',
+];
+function syncWasmFallback() {
+  const srcDir = path.join(ROOT, 'node_modules', WASM_PKG);
+  if (!fs.existsSync(srcDir)) {
+    return '本机没装 ' + WASM_PKG + '（Node <22.5 的目标机需要它兜底；' +
+      '本机 npm install 后重新构建即可一并打进 dist）';
+  }
+  let copied = 0;
+  WASM_FILES.forEach(function (f) {
+    const src = path.join(srcDir, f);
+    const dst = path.join(DIST, 'node_modules', WASM_PKG, f);
+    const sBuf = readIfExists(src);
+    if (sBuf === null) return;
+    const dBuf = readIfExists(dst);
+    if (dBuf !== null && dBuf.equals(sBuf)) { same.push('node_modules/' + WASM_PKG + '/' + f); return; }
+    copied++;
+    if (!CHECK) {
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      fs.copyFileSync(src, dst);
+    }
+  });
+  if (CHECK && copied) return 'wasm 兜底包需要更新（' + copied + ' 个文件）';
+  return copied
+    ? '已把 wasm 兜底包 ' + WASM_PKG + ' 打进 dist/node_modules（Node <22.5 的机器开箱可用）'
+    : 'wasm 兜底包已是最新';
+}
+const wasmMsg = syncWasmFallback();
+
 /* 构建完再校验一遍：dist 里每个 require 和每个页面引用，目标文件都得真的存在。
    这一步是给「清单写漏」兜底的 —— 拷贝到一半被 Ctrl-C、以后新加了模块没被扫到、
    文件名改了但 index.html 没跟着改，都会在这里暴露，而不是等使用者双击才 404。 */
@@ -203,7 +272,12 @@ function verifyDistDeps() {
     fs.readdirSync(dir).forEach(function (n) {
       if (n.indexOf('.') === 0) return;
       const p = path.join(dir, n);
-      if (fs.statSync(p).isDirectory()) { if (n !== 'data') walk(p); return; }
+      if (fs.statSync(p).isDirectory()) {
+        // data 是运行时落库的 SQLite；node_modules 是第三方兜底包，里面的
+        // require 不归我们校验（它只依赖 node: 内置模块）
+        if (n !== 'data' && n !== 'node_modules') walk(p);
+        return;
+      }
       if (path.extname(n) === '.js') jsFiles.push(p);
     });
   })(DIST);
@@ -214,7 +288,9 @@ function verifyDistDeps() {
     let m;
     while ((m = re.exec(src))) {
       checked++;
-      if (!fs.existsSync(path.resolve(path.dirname(p), m[1]))) {
+      const target = path.resolve(path.dirname(p), m[1]);
+      // 不带后缀的 require（./sqlite）对应 sqlite.js
+      if (!fs.existsSync(target) && !fs.existsSync(target + '.js')) {
         missing.push(path.relative(DIST, p) + ' → ' + m[1]);
       }
     }
@@ -248,7 +324,7 @@ function reportDeps(prefix) {
   }
   if (depReport.checked) {
     console.log(prefix + '依赖校验通过：' + depReport.checked +
-      ' 处引用全部可解析（零第三方依赖，使用者无需 npm install）');
+      ' 处引用全部可解析（内部模块齐全；第三方只有可选的 wasm 兜底包）');
   }
   return true;
 }
@@ -264,6 +340,8 @@ if (CHECK) {
   }
   if (guardMsg) console.log('  · ' + guardMsg);
   if (cfgBuildMsg) say(cfgBuildMsg, '  · ');
+  if (pkgMsg) say(pkgMsg, '  · ');
+  say(wasmMsg, '  · ');
   reportDeps('  · ');
   process.exit(n === 0 && depReport.missing.length === 0 ? 0 : 1);
 }
@@ -280,6 +358,8 @@ console.log('· 从入口 ' + ENTRY + ' 解析出 ' + autoDeps.length + ' 个根
   autoDeps.join('、'));
 if (guardMsg) console.log('· ' + guardMsg);
 if (cfgBuildMsg) say(cfgBuildMsg, '· ');
+if (pkgMsg) say(pkgMsg, '· ');
+say(wasmMsg, '· ');
 const depsOk = reportDeps('· ');
 if (!depsOk) process.exit(1); // 缺文件的包发出去只会是 404 / MODULE_NOT_FOUND
 

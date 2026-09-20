@@ -5,11 +5,14 @@
 ## 运行条件
 
 - **Node.js 22.5 或更高**（推荐 22.x LTS）
-  - 原因：看板用 Node 内置的 `node:sqlite` 做存档。
-  - 低于 22.5 也能启动，会自动退回 JSON 存档：看板正常，但没有「搜索解说」和「导出 CSV」。
+  - 原因：看板用 SQLite 存档，22.5 起 Node 自带 `node:sqlite`。
+  - **低于 22.5 也能跑**：会自动换用 `node-sqlite3-wasm`（纯 WebAssembly）。
+    压缩包里已经带上这个包，通常不用管；万一启动日志提示缺它，在本目录执行
+    `npm install node-sqlite3-wasm` 即可。
+  - 两个都凑不出来时：看板照常显示，只是历史不落盘（搜索解说、导出 CSV 不可用）。
 - **能访问 https://mimo.xiaomi.com/rl/** —— 小米官方公开接口，需要外网。
 - 8787 端口空闲。
-- **零第三方依赖**，不需要 `npm install`。
+- **通常不需要 `npm install`** —— 只有 Node 太旧、要装 wasm 兜底包时才需要。
 
 ## 启动
 
@@ -51,6 +54,7 @@
 
 ```
 server.js        主服务：反代上游接口，提供 /api/*
+sqlite.js        SQLite 驱动适配（内置 node:sqlite / wasm 兜底）
 store.js         SQLite 存档层（指标 + 解说）
 llm.js           AI 解说客户端（默认关闭）
 config.json      AI 配置
@@ -136,10 +140,17 @@ GRPO 的组内相对优势、`advantage=(r−mean)/std`、全对/全错时组内
 每次轮询的指标与解说都写入 `data/board.db`（SQLite）。
 解说栏底部有「导出 CSV」，可导出全部历史指标。
 
+存档驱动：Node ≥22.5 用内置的 `node:sqlite`；版本更低时自动换用包里自带的
+`node-sqlite3-wasm`。启动日志会写明用的哪一个。删掉 `data/` 只是清掉历史，
+下次启动会重建。
+
 ## 常见问题
 
 - **页面显示「连接失败」** —— 服务没在跑，重新双击启动脚本。
-- **提示需要 Node 22.5+** —— Node 版本太低，升级后重试。
+- **提示需要 Node 22.5+** —— Node 版本太低。要么升级 Node（推荐），
+  要么在本目录执行 `npm install node-sqlite3-wasm` 用 wasm 兜底。
+- **启动日志出现「存档不可用」** —— 同上：既没有内置 `node:sqlite`，
+  也没装 wasm 兜底包。看板还能看实时数据，但历史不保存。
 - **8787 端口被占用** —— 换端口：改 `config.json` 的 `server.port` 后重启，
   或临时用 `PORT=8899 node server.js`（环境变量优先，不用改文件）。
 - **只想自己能访问** —— 把 `config.json` 里 `server.host` 改成 `127.0.0.1` 并重启。

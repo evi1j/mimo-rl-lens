@@ -2,11 +2,11 @@
 /* 从本机 config.json 把配置项提取进配置模板 —— 改了配置忘了同步模板是常态，
  * 别人拿到的 example 就会缺字段、只能靠内置默认值跑。
  *
- *   node tools/gen-config-example.js            生成（只写 config.example.json）
- *   node tools/gen-config-example.js --check    只检查，模板落后于本机配置就退出码 1
- *   node tools/gen-config-example.js --from X   指定要提取的配置文件（测试用）
+ *   node scripts/gen-config-example.js            生成（只写 config.example.json）
+ *   node scripts/gen-config-example.js --check    只检查，模板落后于本机配置就退出码 1
+ *   node scripts/gen-config-example.js --from X   指定要提取的配置文件（测试用）
  *
- * 只管模板，不碰 dist —— dist/config.json 是构建产物，由 tools/sync-dist.js 生成。
+ * 只管模板，不碰 dist —— dist/config.json 是构建产物，由 scripts/sync-dist.js 生成。
  *
  * 两条安全规矩：
  *   1. 密钥类字段（key/token/secret/password…）一律置空，enabled 一律写 false。
@@ -106,7 +106,7 @@ if (CHECK) {
   }
   console.log('配置模板落后：本机 config.json 有 ' + r.added.length + ' 项没进模板');
   r.added.forEach(function (p) { console.log('  缺  ' + p); });
-  console.log('  跑 node tools/gen-config-example.js 补齐');
+  console.log('  跑 node scripts/gen-config-example.js 补齐');
   process.exit(1);
 }
 

@@ -4,7 +4,7 @@
    3) 完成后显示正文、按钮变「重新生成」
    4) 切到别的指标再切回，缓存内容仍在
    5) AI 不可用时按钮置灰，点击不触发请求
-   用法：NODE_PATH=<node workspace>/node_modules node tools/ai-explain-test.js */
+   用法：NODE_PATH=<node workspace>/node_modules node test/ai-explain-test.js */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');

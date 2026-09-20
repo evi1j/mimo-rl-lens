@@ -1,5 +1,5 @@
 /* 驱动测试的子进程：用一个指定的驱动跑一遍 store 的真实操作，结果打成 JSON。
-   父进程 tools/sqlite-driver-test.js 负责起它和断言。
+   父进程 test/sqlite-driver-test.js 负责起它和断言。
    环境变量：MIMO_SQLITE_DRIVER=builtin|wasm|none，MIMO_DB_FILE=临时库路径 */
 
 const path = require('path');

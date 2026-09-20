@@ -5,7 +5,7 @@
    4) 上一个 / 下一个 能在 18 个指标间导航
    5) 未收录指标走 fallback
    6) 关闭与 Esc 生效
-   用法：NODE_PATH=<node workspace>/node_modules node tools/glossary-test.js */
+   用法：NODE_PATH=<node workspace>/node_modules node test/glossary-test.js */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');

@@ -1,5 +1,5 @@
 /* 用当前 SYSTEM_PROMPT 对一条构造事件试跑一次 AI 解说，用来检查 prompt 实际效果。
-   用法：node tools/ai-prompt-test.js
+   用法：node test/ai-prompt-test.js
    不影响看板服务，也不会写库。 */
 const llm = require('../llm.js');
 

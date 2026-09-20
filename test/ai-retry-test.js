@@ -5,7 +5,7 @@
    3) 连接失败 → 重试 N 次后才报错
    4) 工具轮 5xx → 降级成不查工具直接讲，整条讲解不中断
    5) isRetryable / bodyStrategy 的判定
-   用法：NODE_PATH=<node workspace>/node_modules node tools/ai-retry-test.js */
+   用法：NODE_PATH=<node workspace>/node_modules node test/ai-retry-test.js */
 const http = require('http');
 const path = require('path');
 const llm = require(path.join(__dirname, '..', 'llm.js'));

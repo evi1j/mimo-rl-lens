@@ -2,9 +2,9 @@
 /* 构建 dist/ —— 只在要打包分发时才跑，平时提交代码不碰它。
  * （源码的版本管理 与 部署产物的生成 是两件事，别再绑在提交钩子上。）
  *
- *   node tools/sync-dist.js            构建（打印改了哪些文件）
- *   node tools/sync-dist.js --check    只检查 dist 是否落后于源码（退出码 1 = 落后）
- *   node tools/sync-dist.js --zip      构建完打包 dist.zip
+ *   node scripts/sync-dist.js            构建（打印改了哪些文件）
+ *   node scripts/sync-dist.js --check    只检查 dist 是否落后于源码（退出码 1 = 落后）
+ *   node scripts/sync-dist.js --zip      构建完打包 dist.zip
  *
  * 规矩：
  *   1. dist/config.json 由 config.example.json 脱敏生成（enabled=false、密钥留空），
@@ -165,7 +165,7 @@ DEPLOY_FILES.forEach(function (f) {
 syncPublic();
 
 /* dist/config.json 由模板脱敏生成 —— 绝不复制本机 config.json（那里有真实 key）。
-   模板缺的新配置项由提交钩子负责补（tools/gen-config-example.js），
+   模板缺的新配置项由提交钩子负责补（scripts/gen-config-example.js），
    这里只负责「把已入库的模板变成能直接跑的分发配置」。 */
 function buildDistConfig() {
   const example = cfgTool.readJson(path.join(ROOT, 'config.example.json'));

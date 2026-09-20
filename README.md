@@ -35,7 +35,7 @@ npm run setup           # 登记 git 钩子目录（见「开发约定」）
 | 命令 | 作用 |
 |---|---|
 | `npm start` | 起服务（= `node server.js`） |
-| `npm test` | 跑全部回归（9 个测试脚本，200+ 项断言） |
+| `npm test` | 跑全部回归（`scripts/run-tests.js`，11 组用例、300+ 项断言） |
 | `npm run setup` | 一次性配置：`core.hooksPath` 指向 `.githooks/`；缺 `config.json` 时从模板生成 |
 | `npm run build` | 构建 `dist/`（打包分发时才需要） |
 | `npm run build:check` | 看 `dist/` 是否落后于源码 |
@@ -75,7 +75,9 @@ sqlite.js        SQLite 驱动适配（内置 node:sqlite / wasm 兜底，抹平
 store.js         SQLite 存档层（建表、落库、查询）
 llm.js           AI 客户端：工具定义、流式讲解、分层重试
 public/          前端：index.html + app.js + glossary.js（词库）+ narrator*.js（规则解说）+ style.css
-tools/           开发/测试脚本（sync-dist 构建、gen-config-example 模板提取、setup、各 *-test）
+test/            回归用例（12 个 *-test.js + 一个子进程夹具）
+scripts/         开发与运维脚本：run-tests（统一入口）、sync-dist 构建、
+                 gen-config-example 模板提取、setup、rewrite-pending、几个 probe-*
 deploy/          分发包专属材料：使用者 README、start.command、start.bat
 .githooks/       提交钩子（pre-commit：自动补配置模板）
 config.example.json  配置模板（入库）；config.json 是本机真实配置（不入库）
@@ -137,8 +139,11 @@ cp config.example.json config.json
   差异都在 `sqlite.js` 里抹平，`store.js` 只当它是 `node:sqlite`。
   wasm 版还额外处理一件事：碰到 WAL 模式的库（新 Node 跑过、或进程被强杀留下的）
   会自动降级为普通模式打开，WAL 文件另存留底 —— 否则它连打都打不开。
-- **测试**：改完跑 `npm test`。AI 相关的测试用本地 mock 服务，不依赖外网模型。
-  `server-config-test` 排在最后，它会真起服务占端口，并停掉占用 8787 的进程
+- **测试**：改完跑 `npm test`（= `node scripts/run-tests.js`）。AI 相关的用例用本地
+  mock 服务，不依赖外网模型。用例都在 `test/`，由 `scripts/run-tests.js` 串行跑完再
+  汇总，失败不中断；只跑一组用 `node scripts/run-tests.js --only=store`，
+  `--list` 看有哪些，`--all` 连需要真实模型的 `ai-prompt-test` 一起跑。
+  `server-config-test` 永远排在最后，它会真起服务占端口，并停掉占用 8787 的进程
   （要验证兜底端口），跑完记得重启开发服务。
 
 ## 里程碑

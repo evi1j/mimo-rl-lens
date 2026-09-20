@@ -1,5 +1,5 @@
 /* 工具调用（function calling）测试：模型能不能自己查数据、查错了会不会被告知。
-   用法：NODE_PATH=... node tools/ai-tool-test.js
+   用法：NODE_PATH=... node test/ai-tool-test.js
    前半部分直接调模块（秒级），后半部分打真实服务跑一次完整讲解（约 1~2 分钟）。 */
 
 const path = require('path');

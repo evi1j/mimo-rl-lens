@@ -4,7 +4,7 @@
    3) KV 补充项（训练批 × n、相对首步）
    4) batch composition 堆叠面积图与明细表
    5) 指标库树形导航 + 图表卡片
-   用法：NODE_PATH=<node workspace>/node_modules node tools/views-test.js */
+   用法：NODE_PATH=<node workspace>/node_modules node test/views-test.js */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');

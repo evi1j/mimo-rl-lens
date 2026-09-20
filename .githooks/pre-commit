@@ -3,7 +3,7 @@
 # 改了配置忘了补模板是常态，别人拿到的 example 就会缺字段。
 #
 # 注意：这里**不碰 dist/**。dist 是构建产物，只在要打包分发时手动跑
-#   node tools/sync-dist.js --zip
+#   node scripts/sync-dist.js --zip
 # 源码的版本管理和部署产物的生成是两件事，别再绑在一起。
 #
 # 启用：git config core.hooksPath .githooks   （仓库里已配好，克隆后设一次即可）
@@ -17,7 +17,7 @@ NODE_BIN=$(command -v node || echo node)
 cd "$root"
 
 # 模板落后就补上，并把补出来的改动并进这次提交
-if ! "$NODE_BIN" tools/gen-config-example.js --check >/dev/null 2>&1; then
-  "$NODE_BIN" tools/gen-config-example.js
+if ! "$NODE_BIN" scripts/gen-config-example.js --check >/dev/null 2>&1; then
+  "$NODE_BIN" scripts/gen-config-example.js
   git add config.example.json
 fi

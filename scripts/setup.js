@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* 一次性环境配置：把 git 钩子的查找目录指到仓库里的 .githooks/。
  *
- *   node tools/setup.js      （npm run setup）
+ *   node scripts/setup.js      （npm run setup）
  *
  * 为什么需要：git 默认只认 .git/hooks/ 里的钩子，而 .git/ 是本地私有的、
  * 不会随仓库传播 —— 钩子的源文件放在那里的话，别人克隆下来就丢了。

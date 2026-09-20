@@ -1,7 +1,7 @@
 /* 把库里 ai_state='pending' 的解说条目批量交给 AI 重写。
    用处：改了解说风格/提示词后，让历史条目也用新风格重说一遍。
    注意：改完需要重启看板服务，服务才会重新从库里读到新内容。
-   用法：node tools/rewrite-pending.js [最多处理几条] */
+   用法：node scripts/rewrite-pending.js [最多处理几条] */
 const path = require('path');
 const sqlite = require('../sqlite.js'); // 驱动适配：内置 node:sqlite 或 wasm 兜底
 const llm = require('../llm.js');

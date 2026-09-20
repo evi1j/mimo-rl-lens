@@ -3,8 +3,8 @@
      builtin —— Node 内置 node:sqlite（Node ≥22.5），零依赖
      wasm    —— npm 包 node-sqlite3-wasm，给 Node 太旧的机器兜底
    这里验证「同一个 store，换驱动结果不变」，以及两个都没有时报出可操作的错。
-   store.js 是单例，所以每个驱动开一个子进程跑（tools/sqlite-driver-child.js）。
-   用法：node tools/sqlite-driver-test.js */
+   store.js 是单例，所以每个驱动开一个子进程跑（test/sqlite-driver-child.js）。
+   用法：node test/sqlite-driver-test.js */
 
 const path = require('path');
 const fs = require('fs');

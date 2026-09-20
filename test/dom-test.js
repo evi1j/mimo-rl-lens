@@ -3,7 +3,7 @@
    2) 15 秒自动重绘后，已展开的条目不会被收回去
    3) 新事件导致列表变化时，已展开的条目仍保持展开
    4) 展开状态写进 localStorage，刷新页面后仍在
-   用法：NODE_PATH=<node workspace>/node_modules node tools/dom-test.js */
+   用法：NODE_PATH=<node workspace>/node_modules node test/dom-test.js */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

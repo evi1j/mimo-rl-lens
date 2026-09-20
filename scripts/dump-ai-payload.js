@@ -1,5 +1,5 @@
 /* 打印一次真实的 AI 讲解 payload，用来核对「喂给模型的数据到底有多少」
-   用法：NODE_PATH=<node workspace>/node_modules node tools/dump-ai-payload.js
+   用法：NODE_PATH=<node workspace>/node_modules node scripts/dump-ai-payload.js
    可选：KEY=critic/rewards/mean 指定指标（默认平均通过率） */
 const fs = require('fs');
 const path = require('path');

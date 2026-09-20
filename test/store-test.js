@@ -1,5 +1,5 @@
 /* 指标仓库（series / tag_meta / bench / bench_meta / run_state）的端到端测试。
-   用法：NODE_PATH=... node tools/store-test.js
+   用法：NODE_PATH=... node test/store-test.js
    注意：store.js 是单例，直接用 data/board.db；写入的假数据用 __test__ 前缀，跑完清理。 */
 
 const path = require('path');

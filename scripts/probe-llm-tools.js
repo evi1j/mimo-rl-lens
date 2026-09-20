@@ -1,5 +1,5 @@
 /* 探测本地模型是否支持 OpenAI 风格的 function calling（tools / tool_choice）
-   用法：node tools/probe-llm-tools.js
+   用法：node scripts/probe-llm-tools.js
    用来确认「给 AI 配查询工具」这条路在当前模型上走不走得通。 */
 const path = require('path');
 const cfg = require(path.join(__dirname, '..', 'config.json'));

@@ -3,7 +3,7 @@
    2) 每个卡片都渲染出折线图
    3) 中文名、末值、说明三项都不为空
    4) pro / flash 两个 run 都有数据
-   用法：NODE_PATH=<node workspace>/node_modules node tools/metrics-test.js */
+   用法：NODE_PATH=<node workspace>/node_modules node test/metrics-test.js */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');

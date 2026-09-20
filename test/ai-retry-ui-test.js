@@ -4,7 +4,7 @@
    3) 生成中途断掉时保留正文并给出「可能不完整」的提示
    4) 抽屉刷新重渲染后，这些块都还在
    用预制 NDJSON 流喂 jsdom，不依赖真实模型（约 20s）。
-   用法：NODE_PATH=<node workspace>/node_modules node tools/ai-retry-ui-test.js */
+   用法：NODE_PATH=<node workspace>/node_modules node test/ai-retry-ui-test.js */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');

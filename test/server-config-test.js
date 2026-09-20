@@ -9,7 +9,7 @@
  * 打印的监听地址（那行是 listen 回调里打的，打印即代表端口绑定成功）。
  * 全程用 8790+ 这些冷门端口，不动正在跑的 8787；结束一定恢复原配置。
  *
- *   node tools/server-config-test.js
+ *   node test/server-config-test.js
  */
 'use strict';
 

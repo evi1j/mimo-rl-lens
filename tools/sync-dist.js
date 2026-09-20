@@ -27,8 +27,61 @@ const DIST_COMMENT = 'AI 解说配置。默认关闭（enabled=false）——此
   '展开仍有知识点讲解，页面不会空白。接入自己的 OpenAI 兼容接口后，把 enabled 改为 true ' +
   '并填写 baseUrl / apiKey / model 三项即可，改完无需重启服务。';
 
-// 根级要同步的文件
-const ROOT_FILES = ['llm.js', 'server.js', 'store.js', 'config.example.json'];
+/* ── 依赖：第三方为零，内部模块不靠手写清单 ────────────────────────
+ * 本项目不用任何 npm 包（只用 http / fs / path / child_process / node:sqlite），
+ * 所以没有 node_modules 要打包，使用者也不需要 npm install。
+ * 真正会出错的是内部模块：以前 ROOT_FILES 是写死的四个文件，哪天新加一个根级
+ * js 被 server.js require 了，构建不会带上它，dist 一跑就 MODULE_NOT_FOUND。
+ * 所以改成从入口递归解析 require，并在构建后再校验一遍（见 verifyDistDeps）。 */
+
+/* 解析前先剥掉注释。否则 UMD 头部那种「用法示例」里的 require 会被当成真实依赖
+   （narrator-core.js 开头就有一行 Node 示例），报出根本不存在的路径。 */
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1'); // 冒号后的 // 多半是 http://，不当注释
+}
+
+/* 从入口出发递归收集本地 require 的模块（只跟相对路径，忽略内置/第三方） */
+function collectLocalDeps(entryRel, seen) {
+  seen = seen || Object.create(null);
+  if (seen[entryRel]) return seen;
+  seen[entryRel] = true;
+  const buf = readIfExists(path.join(ROOT, entryRel));
+  if (buf === null) return seen;
+  const re = /require\(\s*['"](\.[^'"]+)['"]\s*\)/g;
+  let m;
+  const src = stripComments(buf.toString('utf8'));
+  while ((m = re.exec(src))) {
+    const base = path.dirname(entryRel);
+    const rel = path.posix.normalize(base === '.' ? m[1] : base + '/' + m[1]);
+    collectLocalDeps(rel, seen);
+  }
+  return seen;
+}
+
+/* 页面引用的静态资源（style.css、各个 js）。外链不管，只校验本地的。 */
+function collectHtmlAssets(entryRel) {
+  const buf = readIfExists(path.join(ROOT, entryRel));
+  if (buf === null) return [];
+  const out = [];
+  const re = /(?:src|href)\s*=\s*["']([^"']+)["']/g;
+  let m;
+  while ((m = re.exec(buf.toString('utf8')))) {
+    const u = m[1];
+    // 锚点（#overview）、外链、data URI 都不是要打包的文件
+    if (u.indexOf('#') === 0 || /^(https?:)?\/\//.test(u) || u.indexOf('data:') === 0) continue;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(u)) continue; // mailto: 之类的协议
+    out.push(u.split('?')[0]); // 去掉 ?v=21 这类版本号查询串
+  }
+  return out;
+}
+
+const ENTRY = 'server.js';
+const autoDeps = Object.keys(collectLocalDeps(ENTRY))
+  .filter(function (f) { return f.indexOf('public/') !== 0; }); // public/ 整目录同步
+// 根级要同步的文件：自动解析出来的模块 + 配置模板（给使用者照着填）
+const ROOT_FILES = Array.from(new Set(['config.example.json'].concat(autoDeps)));
 // 分发包专属材料的源文件（dist/ 不入库，这些东西得有地方存）
 const DEPLOY_FILES = ['README.md', 'start.command', 'start.bat'];
 // public/ 下参与同步的后缀（其余如 .map、临时文件不动）
@@ -137,10 +190,67 @@ function configGuard() {
 }
 const guardMsg = configGuard();
 
+/* 构建完再校验一遍：dist 里每个 require 和每个页面引用，目标文件都得真的存在。
+   这一步是给「清单写漏」兜底的 —— 拷贝到一半被 Ctrl-C、以后新加了模块没被扫到、
+   文件名改了但 index.html 没跟着改，都会在这里暴露，而不是等使用者双击才 404。 */
+function verifyDistDeps() {
+  if (!fs.existsSync(DIST)) return { missing: [], checked: 0 };
+  const missing = [];
+  let checked = 0;
+
+  const jsFiles = [];
+  (function walk(dir) {
+    fs.readdirSync(dir).forEach(function (n) {
+      if (n.indexOf('.') === 0) return;
+      const p = path.join(dir, n);
+      if (fs.statSync(p).isDirectory()) { if (n !== 'data') walk(p); return; }
+      if (path.extname(n) === '.js') jsFiles.push(p);
+    });
+  })(DIST);
+
+  jsFiles.forEach(function (p) {
+    const src = stripComments(fs.readFileSync(p, 'utf8'));
+    const re = /require\(\s*['"](\.[^'"]+)['"]\s*\)/g;
+    let m;
+    while ((m = re.exec(src))) {
+      checked++;
+      if (!fs.existsSync(path.resolve(path.dirname(p), m[1]))) {
+        missing.push(path.relative(DIST, p) + ' → ' + m[1]);
+      }
+    }
+  });
+
+  const html = path.join(DIST, 'public', 'index.html');
+  if (fs.existsSync(html)) {
+    collectHtmlAssets('public/index.html').forEach(function (u) {
+      checked++;
+      if (!fs.existsSync(path.join(DIST, 'public', u))) {
+        missing.push('public/index.html → ' + u);
+      }
+    });
+  }
+  return { missing: missing, checked: checked };
+}
+const depReport = verifyDistDeps();
+
 const n = changed.length + added.length + removed.length;
 
 function say(msg, prefix) {
   String(msg).split('\n').forEach(function (l) { if (l.trim()) console.log(prefix + l.trim()); });
+}
+
+/* 依赖校验结果：缺文件是硬错误，必须挡住打包 */
+function reportDeps(prefix) {
+  if (depReport.missing.length) {
+    console.log(prefix + '✗ dist 引用了 ' + depReport.missing.length + ' 个不存在的文件：');
+    depReport.missing.forEach(function (m) { console.log(prefix + '    ' + m); });
+    return false;
+  }
+  if (depReport.checked) {
+    console.log(prefix + '依赖校验通过：' + depReport.checked +
+      ' 处引用全部可解析（零第三方依赖，使用者无需 npm install）');
+  }
+  return true;
 }
 
 if (CHECK) {
@@ -154,7 +264,8 @@ if (CHECK) {
   }
   if (guardMsg) console.log('  · ' + guardMsg);
   if (cfgBuildMsg) say(cfgBuildMsg, '  · ');
-  process.exit(n === 0 ? 0 : 1);
+  reportDeps('  · ');
+  process.exit(n === 0 && depReport.missing.length === 0 ? 0 : 1);
 }
 
 if (n === 0) {
@@ -165,8 +276,12 @@ if (n === 0) {
   added.forEach(function (f) { console.log('  增  ' + f); });
   removed.forEach(function (f) { console.log('  删  ' + f); });
 }
+console.log('· 从入口 ' + ENTRY + ' 解析出 ' + autoDeps.length + ' 个根级模块：' +
+  autoDeps.join('、'));
 if (guardMsg) console.log('· ' + guardMsg);
 if (cfgBuildMsg) say(cfgBuildMsg, '· ');
+const depsOk = reportDeps('· ');
+if (!depsOk) process.exit(1); // 缺文件的包发出去只会是 404 / MODULE_NOT_FOUND
 
 if (ZIP) {
   const out = path.join(ROOT, 'dist.zip');

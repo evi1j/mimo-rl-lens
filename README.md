@@ -117,6 +117,12 @@ cp config.example.json config.json
   并进同一笔提交。新克隆的机器要跑一次 `npm run setup` 才会生效。
 - **`dist/` 不入库**：它是构建产物，只在要打包分发时手动 `npm run build:zip` 生成。
   源码的版本管理和部署产物的生成是两件事，别再绑在一起。
+- **构建时的依赖处理**：项目零第三方依赖（只用 Node 内置模块），所以不需要
+  `node_modules`，使用者也不用 `npm install`。构建脚本要操心的是**内部模块**——
+  它从入口 `server.js` 递归解析 `require` 自动得出要拷贝哪些根级模块，
+  不靠手写清单（以前写死四个文件，新加模块就会漏进 dist，一跑就 MODULE_NOT_FOUND）。
+  构建完还会校验一遍：dist 里每个 `require`、页面每个 `src`/`href` 的目标文件都得存在，
+  缺了就报错并挡住打包。运行时另有 Node ≥22.5 的软要求（低版本自动退回 JSON 存档）。
 - **测试**：改完跑 `npm test`。AI 相关的测试用本地 mock 服务，不依赖外网模型。
   `server-config-test` 排在最后，它会真起服务占端口，并停掉占用 8787 的进程
   （要验证兜底端口），跑完记得重启开发服务。

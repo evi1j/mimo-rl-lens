@@ -803,6 +803,19 @@
              arr.map(glStepHtml).join("") + "</div>";
   }
 
+  /* 重跑前收起来的「上一次的不完整内容」。默认收起，观众看下面那版就行。 */
+  function glPartialsHtml(st) {
+    var arr = (st && st.partials) || [];
+    return arr.map(function (p) {
+      return '<details class="gl-ai-think gl-ai-partial">' +
+               "<summary>" + (p.reason === "short" ? "上一次内容不完整" : "上一次生成中断") +
+                 " · 点开看已有的部分</summary>" +
+               '<div class="gl-ai-partial-h">下面是重新生成的完整内容。</div>' +
+               '<div class="gl-ai-think-b">' + esc(p.text) + "</div>" +
+             "</details>";
+    }).join("");
+  }
+
   /* AI 讲解页。缓存命中时直接渲染已生成内容，不再请求。
      思考过程用 details 折叠：它比正文先产生，所以排在正文上方；
      默认收起，想看再点开，不占地方。 */
@@ -837,6 +850,10 @@
                "</summary>" +
                '<div class="gl-ai-think-b">' + esc(think) + "</div>" +
              "</details>" +
+             glPartialsHtml(st) +
+             (st && st.truncated
+               ? '<div class="gl-ai-warn">这段在生成过程中断，可能不完整，可点「重新生成」再来一次</div>'
+               : "") +
              '<div class="' + cls + '" id="gl-ai-out"' + (text ? "" : " hidden") + ">" +
                esc(text) + "</div>" +
            "</div>";
@@ -858,6 +875,8 @@
         model: glAiBuf.model,
         tools: glAiBuf.tools,
         steps: stepsPlain(glAiBuf.steps),
+        partials: glAiBuf.partials,
+        truncated: glAiBuf.truncated,
       };
     }
     glAiBuf = null;
@@ -882,7 +901,8 @@
     var token = ++glAiToken;
     glAiBusy = true;
     glAiBuf = { key: key, acc: "", think: "", plan: "", model: "", err: "",
-                started: false, tools: [], steps: [], cur: null, pend: null };
+                started: false, tools: [], steps: [], cur: null, pend: null,
+                partials: [], truncated: false };
     glAi[key] = null;
     stepsEl.hidden = true;
     stepsEl.textContent = "";
@@ -1016,6 +1036,30 @@
       }
     }
 
+    /* 重跑正文轮前，把已经吐出来的内容收成一个折叠块留在正文上方。
+       标题写明它不完整，引导观众看下面重新生成的完整版。 */
+    function shrinkOut(reason) {
+      var cur = String(out.textContent || "").trim();
+      if (!cur) return;               // 一个字都没有就没什么可留的
+      var d = document.createElement("details");
+      d.className = "gl-ai-think gl-ai-partial";
+      d.open = false;
+      var sum = document.createElement("summary");
+      sum.textContent = (reason === "short" ? "上一次内容不完整" : "上一次生成中断") +
+                        " · 点开看已有的部分";
+      var hint = document.createElement("div");
+      hint.className = "gl-ai-partial-h";
+      hint.textContent = "下面是重新生成的完整内容。";
+      var box = document.createElement("div");
+      box.className = "gl-ai-think-b";
+      box.textContent = cur;
+      d.appendChild(sum);
+      d.appendChild(hint);
+      d.appendChild(box);
+      out.parentNode.insertBefore(d, out);
+      if (glAiBuf) glAiBuf.partials.push({ reason: reason || "", text: cur });
+    }
+
     /* 让最新文字始终可见。只在用户已经贴着底部时才跟随，
        否则会打断他往上翻阅读。 */
     function follow() {
@@ -1050,8 +1094,16 @@
         glAi[key] = { status: "error", err: buf.err };
       } else if (txt) {
         out.textContent = txt;
+        // 断连留下的不完整内容：写清楚，别让人当成讲完了
+        if (buf.truncated) {
+          var warn = document.createElement("div");
+          warn.className = "gl-ai-warn";
+          warn.textContent = "这段在生成过程中断，可能不完整，可点「重新生成」再来一次";
+          out.parentNode.insertBefore(warn, out);
+        }
         glAi[key] = { status: "done", text: txt, think: buf.think, plan: buf.plan,
-                      model: buf.model, tools: buf.tools, steps: stepsPlain(buf.steps) };
+                      model: buf.model, tools: buf.tools, steps: stepsPlain(buf.steps),
+                      partials: buf.partials, truncated: buf.truncated };
         var mEl = $("gl-ai-model");
         if (mEl && buf.model) mEl.textContent = buf.model;
         var btn = document.querySelector('.gl-ai-btn[data-ai="' + key + '"]');
@@ -1145,8 +1197,31 @@
                 statusEl.hidden = false;
                 statusEl.textContent = isPlan ? "AI 正在决定查什么…" : "AI 正在思考…";
               }
+            } else if (j.notice) {
+              // 后端要重试了：把原因说清楚，别让观众以为卡死
+              if (statusEl) {
+                statusEl.hidden = false;
+                statusEl.textContent = j.notice;
+              }
+            } else if (j.restart) {
+              /* 重跑正文轮。上一次的内容不丢，收成一个折叠块留在上面
+                 （观众可能正看到一半），下面接新的完整内容。
+                 工具轮查到的数据不重查，所以决策块保持原样。 */
+              shrinkOut(j.restart && j.restart.reason);
+              b.started = false;
+              b.acc = "";
+              b.think = "";      // 新一轮会重新思考，旧的堆着反而看不清
+              if (thinkEl) {
+                thinkEl.hidden = true;
+                var tb2 = thinkEl.querySelector(".gl-ai-think-b");
+                if (tb2) tb2.textContent = "";
+              }
+              out.hidden = false;
+              out.className = "gl-ai-out is-wait";
+              out.textContent = "AI 正在重新生成…";
             } else if (j.done) {
               b.model = j.model || "";
+              b.truncated = !!j.truncated;
             } else if (j.error) {
               b.err = j.error;
             }

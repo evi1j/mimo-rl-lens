@@ -65,6 +65,23 @@ function sendJSON(res, code, obj) {
   res.end(buf);
 }
 
+/* AI 出错时给观众看的一句话。原始错误（HTTP 400 {...}）上屏没人看得懂，
+   原文只在服务端日志里留着。 */
+function friendlyAiError(e) {
+  const m = String((e && e.message) || e);
+  const code = (m.match(/HTTP (\d{3})/) || [])[1];
+  if (/fetch failed|ECONNREFUSED|EAI_AGAIN|ENOTFOUND/i.test(m)) {
+    return '连不上 AI 服务。检查 config.json 里的 llm.baseUrl，以及推理服务是否在跑';
+  }
+  if (code === '429') return 'AI 服务限流了（429），过一会儿再试';
+  if (code === '401' || code === '403') return 'AI 服务拒绝了鉴权（' + code + '），检查 llm.apiKey';
+  if (code === '400') return 'AI 服务不接受这次请求（400），多半是参数不被这个模型支持';
+  if (code && /^5/.test(code)) return 'AI 服务暂时不可用（' + code + '），过一会儿再试';
+  if (/timed out|timeout|aborted/i.test(m)) return 'AI 服务响应超时，讲解没能写完，可以再点一次';
+  if (/正文过短/.test(m)) return '模型连续几次都只写思考没写正文，换一个模型或调大 llm.explainMaxTokens 再试';
+  return '生成失败：' + m.slice(0, 120);
+}
+
 function serveStatic(res, urlPath) {
   let rel = decodeURIComponent(urlPath.split('?')[0]);
   if (rel === '/' || rel === '') rel = '/index.html';
@@ -279,10 +296,13 @@ const server = http.createServer(async (req, res) => {
 
   /* 指标讲解：POST /api/explain —— 流式吐字。
      响应是 NDJSON（每行一个 JSON，逐行推给前端）：
-       {"think":"..."}  推理型模型的思考过程（可折叠查看）
+       {"think":"...", phase:"tool"|"main", round:n}  思考过程；工具轮的带 round 便于分组
        {"delta":"..."}  正文片段，前端边收边追加
-       {"done":true,"model":"..."}
-       {"error":"..."}  出错时给出原因，前端原样显示
+       {"tool":{...}}   AI 调了哪个查询工具
+       {"notice":"..."} 重试提示（正文没写出来，正在换策略再试）
+       {"restart":{...}}重跑正文轮：前端把上一次的内容收起来，准备收新的
+       {"done":true,"model":"...","attempts":n,"truncated":bool}
+       {"error":"..."}  出错时给出人话原因
      客户端关掉抽屉时 req 会 close，send 返回 false 即中止生成，不浪费 token。 */
   if (p === '/api/explain') {
     if (req.method !== 'POST') { sendJSON(res, 405, { error: '请用 POST' }); return; }
@@ -323,10 +343,19 @@ const server = http.createServer(async (req, res) => {
         function (t) { return send({ delta: t }); },
         // 工具轮的思考带 phase='tool'，前端放进「查询决策」区；其余是分析数据的思考
         function (t, phase, round) { return send({ think: t, phase: phase || 'main', round: round || 0 }); },
-        function (info) { return send({ tool: info }); }); // AI 查了什么，前端实时显示
-      send({ done: true, model: out.model, toolRounds: out.toolRounds || 0 });
+        function (info) { return send({ tool: info }); }, // AI 查了什么，前端实时显示
+        {
+          // 重试前通知前端：把上一次的内容收起来，别让观众以为卡住
+          onNotice: function (msg) { return send({ notice: msg }); },
+          onRestart: function (info) { return send({ restart: info || {} }); },
+        });
+      send({ done: true, model: out.model, toolRounds: out.toolRounds || 0,
+             attempts: out.attempts || 1, truncated: !!out.truncated });
     } catch (e) {
-      send({ error: String(e.message || e).slice(0, 300) });
+      // 原始错误（HTTP 400 {...}）直接上屏没人看得懂，翻成人话；
+      // 完整错误仍在服务端日志里，方便排查
+      console.log('ai explain 失败：' + String(e.message || e).slice(0, 200));
+      send({ error: friendlyAiError(e) });
     }
     try { res.end(); } catch (e) { /* 客户端已断开 */ }
     return;

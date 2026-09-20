@@ -25,6 +25,15 @@ const DEFAULTS = {
   // 工具轮：给 AI 配本地查询工具，让它自己决定查什么
   explainUseTools: true,
   toolMaxTokens: 800, // 工具轮只要输出 tool_calls，不需要长文本
+  /* 重试（分层，不是整条重来）：
+     讲解链路有两段——工具轮查数据、正文轮写讲解。任何一段都可能被网络抖动、
+     上游 5xx、思考吃满额度（正文空）、流中途断连打断。整条重跑代价最大：
+     查到的数据要再查一遍、观众要多等一倍时间。所以按环节分别重试。
+     下面三项都可在 config.json 的 llm 段覆盖。 */
+  retryMax: 2,             // 单个请求在「还没吐出任何内容」时的重试次数
+  bodyAttempts: 3,         // 正文轮最多尝试几次（含首次）；3 = 首次 + 2 次重试
+  enoughChars: 200,        // 正文到这个字数就算讲成了；不到就判定不完整再试
+  retryBackoffMs: 800,     // 重试间隔基数，逐次翻倍
 };
 
 function loadConfig() {
@@ -58,7 +67,7 @@ function setStatus(patch) {
   Object.assign(status, patch);
 }
 
-async function request(cfg, method, urlPath, body) {
+async function requestOnce(cfg, method, urlPath, body) {
   const url = String(cfg.baseUrl).replace(/\/+$/, '') + urlPath;
   const res = await fetch(url, {
     method: method,
@@ -75,6 +84,75 @@ async function request(cfg, method, urlPath, body) {
     throw new Error('HTTP ' + res.status + ' ' + detail);
   }
   return res.json();
+}
+
+/* 哪些错误值得原样再试一次：网络类、限流、服务端错误。
+   4xx（尤其 400）不重试——那是参数问题，原样重试只会再错一次，
+   要交给上层换参数（比如去掉 reasoning_effort）。 */
+function isRetryable(e) {
+  const m = String((e && e.message) || e);
+  if (/HTTP (429|500|502|503|504)/.test(m)) return true;
+  if (/fetch failed|ECONNREFUSED|ECONNRESET|EPIPE|ETIMEDOUT|ETIME|EAI_AGAIN|socket hang up|terminated|network|timed out|timeout|aborted/i.test(m)) return true;
+  return false;
+}
+
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+function backoffMs(i, cfg) {
+  const base = Number(cfg && cfg.retryBackoffMs) || 800;
+  return Math.round(base * Math.pow(2, i));
+}
+
+/* 非流式请求：失败就退避重试，上限 retryMax 次。 */
+async function request(cfg, method, urlPath, body) {
+  const tries = Math.max(0, Number(cfg.retryMax) || 0);
+  let last = null;
+  for (let i = 0; i <= tries; i++) {
+    try {
+      return await requestOnce(cfg, method, urlPath, body);
+    } catch (e) {
+      last = e;
+      if (i === tries || !isRetryable(e)) break;
+      console.log('ai: 请求失败（' + String(e.message || e).slice(0, 60) + '），' +
+        backoffMs(i, cfg) + 'ms 后重试 ' + (i + 1) + '/' + tries);
+      await sleep(backoffMs(i, cfg));
+    }
+  }
+  throw last;
+}
+
+/* 流式请求：只在「连接阶段」重试（fetch 报错或非 2xx）。
+   一旦开始读流就可能有内容已经推给前端，这时再重连会把内容重复一遍，
+   所以流读到一半断开不在这里重试，交给上层按「已吐出多少」决定要不要重跑。 */
+async function streamFetch(cfg, body, tries) {
+  const url = String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions';
+  let last = null;
+  for (let i = 0; i <= tries; i++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer ' + (cfg.apiKey || 'sk-no-key'),
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(Number(cfg.timeoutMs) || 120000),
+      });
+      if (!res.ok || !res.body) {
+        let detail = '';
+        try { detail = (await res.text()).slice(0, 200); } catch (e) { /* ignore */ }
+        throw new Error('HTTP ' + res.status + ' ' + detail);
+      }
+      return res;
+    } catch (e) {
+      last = e;
+      if (i === tries || !isRetryable(e)) break;
+      console.log('ai: 流式连接失败（' + String(e.message || e).slice(0, 60) + '），' +
+        backoffMs(i, cfg) + 'ms 后重试 ' + (i + 1) + '/' + tries);
+      await sleep(backoffMs(i, cfg));
+    }
+  }
+  throw last;
 }
 
 async function listModels(cfg) {
@@ -555,20 +633,7 @@ async function streamToolChat(cfg, messages, toolChoice, onThink) {
     stream: true,
   };
   if (toolChoice) body.tool_choice = toolChoice;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: 'Bearer ' + (cfg.apiKey || 'sk-no-key'),
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(Number(cfg.timeoutMs) || 120000),
-  });
-  if (!res.ok || !res.body) {
-    let detail = '';
-    try { detail = (await res.text()).slice(0, 200); } catch (e) { /* ignore */ }
-    throw new Error('HTTP ' + res.status + ' ' + detail);
-  }
+  const res = await streamFetch(cfg, body, Math.max(0, Number(cfg.retryMax) || 0));
 
   const reader = res.body.getReader();
   const dec = new TextDecoder('utf-8');
@@ -688,9 +753,8 @@ async function streamChat(cfg, messages, onDelta, onThink, opts) {
     model: model,
     messages: messages,
     temperature: Number(cfg.temperature) || 0.3,
-    // 额度给足：讲解的提示词带固定文案底稿，比解说长得多，
-    // 思考一旦吃满额度正文就一个字都出不来（实测过）。
-    max_tokens: Number(cfg.explainMaxTokens) || 4000,
+    // 额度由调用方给（重试时会逐次加大），默认取自配置
+    max_tokens: Number(opts.maxTokens || cfg.explainMaxTokens) || 4000,
     stream: true,
   };
   // effort 由调用方指定；为空则不传，交给服务默认行为
@@ -698,25 +762,13 @@ async function streamChat(cfg, messages, onDelta, onThink, opts) {
   // 跑过工具轮后必须强制它出正文：否则它可能又去调工具，正文一个字都没有
   if (opts.tools) body.tools = opts.tools;
   if (opts.toolChoice) body.tool_choice = opts.toolChoice;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: 'Bearer ' + (cfg.apiKey || 'sk-no-key'),
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(Number(cfg.timeoutMs) || 120000),
-  });
-  if (!res.ok || !res.body) {
-    let detail = '';
-    try { detail = (await res.text()).slice(0, 200); } catch (e) { /* ignore */ }
-    throw new Error('HTTP ' + res.status + ' ' + detail);
-  }
+  const res = await streamFetch(cfg, body, Math.max(0, Number(cfg.retryMax) || 0));
 
   const reader = res.body.getReader();
   const dec = new TextDecoder('utf-8');
   let buf = '';
   let stop = false;
+  let chars = 0; // 已吐出的正文字数：流断掉时靠它判断要不要重跑
   try {
     for (;;) {
       const r = await reader.read();
@@ -736,19 +788,26 @@ async function streamChat(cfg, messages, onDelta, onThink, opts) {
         const think = typeof d.reasoning_content === 'string' ? d.reasoning_content
           : (typeof d.reasoning === 'string' ? d.reasoning : '');
         if (think && onThink && onThink(think) === false) { stop = true; break; }
-        if (typeof d.content === 'string' && d.content && onDelta(d.content) === false) { stop = true; break; }
+        if (typeof d.content === 'string' && d.content) {
+          chars += d.content.length;
+          if (onDelta(d.content) === false) { stop = true; break; }
+        }
       }
       if (stop) break;
     }
+  } catch (e) {
+    // 流中途出错：把「已经吐了多少」带给上层，由它决定是重跑还是就此收下
+    e.partialChars = chars;
+    throw e;
   } finally {
     if (stop) { try { await reader.cancel(); } catch (e) { /* ignore */ } }
   }
-  return model;
+  return { model: model, chars: chars, aborted: stop };
 }
 
 /* 讲解某个指标。payload 由前端组装（含该指标的固定文案与实时数值）。
    onDelta 收到正文片段，onThink 收到思考过程。失败一律抛错，由调用方降级。 */
-async function explainMetric(payload, onDelta, onThink, onTool) {
+async function explainMetric(payload, onDelta, onThink, onTool, hooks) {
   const cfg = loadConfig();
   setStatus({ enabled: !!cfg.enabled, baseUrl: cfg.baseUrl });
   if (!cfg.enabled) {
@@ -781,49 +840,103 @@ async function explainMetric(payload, onDelta, onThink, onTool) {
      实测：带 tools 时模型会忍不住继续「要查数据」，而 tool_choice=none 又不给它
      结构化调用，它就退化成在正文里写 <tool_call> 标签——观众看到的是一堆 XML
      而不是讲解。工具结果已经在上下文里，够它用了。 */
-  const opts = { effort: effort };
 
-  const onDeltaSafe = filterToolCallText(onDelta || function () { return true; });
+  /* 正文轮重试：这里是最容易「白跑一趟」的地方——推理模型把额度全花在思考上，
+     正文一个字都没有。每次重试都换一套更保守的参数，而不是原样再来一遍：
+     第 1 次失败 → 去掉 reasoning_effort（实测不传时思考最少）并加额度；
+     第 2 次失败 → 再加额度，并显式要求「直接给结论，别长篇推导」。
+     注意：只重跑正文轮，工具轮查到的数据留在 messages 里不重查。 */
+  const attempts = Math.max(1, Number(cfg.bodyAttempts) || 3);
+  const enough = Math.max(1, Number(cfg.enoughChars) || 200);
+  hooks = hooks || {};
+  const notify = function (msg) { if (typeof hooks.onNotice === 'function') hooks.onNotice(msg); };
 
-  try {
-    let model;
+  let model = '';
+  let lastErr = null;
+  let switched = false;
+  let curCfg = cfg;
+
+  for (let a = 0; a < attempts; a++) {
+    const n = a + 1;
+    const st = bodyStrategy(a, cfg, effort);
+    // 告诉前端：上一次的内容先收起来（不是丢掉），下面接着生成新的
+    if (a > 0) {
+      if (st.notice) notify(st.notice);
+      if (typeof hooks.onRestart === 'function') hooks.onRestart({ attempt: n, reason: st.reason });
+    }
+    const msgs = st.extra ? messages.concat([{ role: 'user', content: st.extra }]) : messages;
+    const onDeltaSafe = filterToolCallText(onDelta || function () { return true; });
     try {
-      model = await streamChat(cfg, messages, onDeltaSafe, onThink, opts);
-    } catch (e1) {
-      // 有的服务不认 reasoning_effort / tool_choice（返回 400）。这时还没开始吐字，
-      // 去掉这些参数重试是安全的，不会把内容重复推给前端。
-      if (/HTTP 400/.test(String(e1.message || e1))) {
-        console.log('ai explain: 参数不被支持（effort=' + effort + ' toolChoice=' +
-          (opts.toolChoice || '-') + '），去掉后重试');
-        model = await streamChat(cfg, messages, onDeltaSafe, onThink, { effort: null });
-      } else {
-        throw e1;
+      const r = await streamChat(curCfg, msgs, onDeltaSafe, onThink,
+        { effort: st.effort, maxTokens: st.maxTokens });
+      model = r.model || model;
+      if (r.aborted) return { model: model, toolRounds: rounds, attempts: n, aborted: true };
+      if (r.chars >= enough) {
+        setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000, lastError: null, generated: status.generated + 1 });
+        return { model: model, toolRounds: rounds, attempts: n };
       }
-    }
-    setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000, lastError: null, generated: status.generated + 1 });
-    return { model: model, toolRounds: rounds };
-  } catch (e) {
-    // 模型名不对时自动换一个可用的再试一次
-    if (isModelError(e)) {
-      try {
-        const models = await listModels(cfg);
-        const alt = models.filter((m) => m !== cfg.model)[0];
-        if (alt) {
-          console.log(`ai explain: 模型 ${cfg.model} 不可用，自动改用 ${alt}`);
-          const model = await streamChat(Object.assign({}, cfg, { model: alt }), messages, onDeltaSafe, onThink, opts);
-          setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000, lastError: null, generated: status.generated + 1 });
-          return { model: model, toolRounds: rounds };
-        }
-      } catch (e2) {
-        // 换模型也失败，落到下面统一报错
+      lastErr = new Error('正文过短（' + r.chars + ' 字 < ' + enough + '）');
+      console.log('ai explain: 第 ' + n + ' 次正文只有 ' + r.chars + ' 字，判定不完整');
+    } catch (e) {
+      const got = Number(e.partialChars || 0);
+      // 断连但已经讲出足够内容：当作讲成了。重跑会让观众把已有的字再看一遍，
+      // 而且断的多半只是结尾，为此再烧一次生成不值
+      if (got >= enough) {
+        console.log('ai explain: 流在第 ' + n + ' 次中断，已吐出 ' + got + ' 字，按可用处理');
+        setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000, lastError: null, generated: status.generated + 1 });
+        return { model: model, toolRounds: rounds, attempts: n, truncated: true };
       }
+      lastErr = e;
+      // 模型名不对：换一个可用的模型再试，不额外消耗退避
+      if (isModelError(e) && !switched) {
+        try {
+          const models = await listModels(curCfg);
+          const alt = models.filter((m) => m !== curCfg.model)[0];
+          if (alt) {
+            console.log('ai explain: 模型 ' + (curCfg.model || '-') + ' 不可用，自动改用 ' + alt);
+            curCfg = Object.assign({}, curCfg, { model: alt });
+            switched = true;
+            continue;
+          }
+        } catch (e2) { /* 换个模型也失败，按普通错误处理 */ }
+      }
+      // 400 是参数问题：下一轮本来就会去掉 effort，继续即可；其余不可重试的错误直接放弃
+      if (!isRetryable(e) && !/HTTP 400/.test(String(e.message || e))) break;
+      console.log('ai explain: 第 ' + n + ' 次生成失败（' + String(e.message || e).slice(0, 60) + '）');
     }
-    setStatus({ ok: false, lastError: String(e.message || e).slice(0, 160), failed: status.failed + 1 });
-    throw e;
+    if (a < attempts - 1) await sleep(backoffMs(a, cfg));
   }
+
+  setStatus({ ok: false, lastError: String((lastErr && lastErr.message) || lastErr).slice(0, 160), failed: status.failed + 1 });
+  throw lastErr || new Error('讲解生成失败');
+}
+
+/* 正文轮每次尝试的参数：越往后越「催它出正文」。 */
+function bodyStrategy(attempt, cfg, effort) {
+  const base = Number(cfg.explainMaxTokens) || 4000;
+  if (attempt === 0) {
+    return { effort: effort, maxTokens: base, reason: '', notice: '' };
+  }
+  if (attempt === 1) {
+    return {
+      effort: null, // 实测：不传 effort 时思考量最少，正文最容易被挤出来
+      maxTokens: Math.round(base * 1.25),
+      reason: 'short',
+      notice: '第一次没写出正文，降低思考强度再试一次',
+    };
+  }
+  return {
+    effort: null,
+    maxTokens: Math.round(base * 1.5),
+    reason: 'short',
+    notice: '正文仍不完整，最后一次尝试：直接给结论',
+    extra: '注意：上一次你只输出了思考、正文几乎没写。' +
+      '这一次请直接输出给观众看的讲解正文，250~450 字，不要长篇推导。',
+  };
 }
 
 module.exports = {
   loadConfig, narrate, probe, status, listModels, explainMetric,
   TOOLS, runTool, summarizeToolResult, toolChat,
+  isRetryable, bodyStrategy,
 };

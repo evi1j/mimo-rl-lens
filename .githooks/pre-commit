@@ -1,0 +1,25 @@
+#!/bin/sh
+# 提交前自动把源码同步到 dist/ —— 免得改了源码忘了复制，dist 一直停在旧版本。
+#
+# 只在本次提交确实含源码文件时才跑（改 README 之类不触发）。
+# 同步出来的 dist 改动会自动并进这次提交，所以不会出现
+# 「源码提交里改了、dist 提交里才补上」的两笔。
+#
+# 启用：git config core.hooksPath .githooks   （仓库里已配好，克隆后设一次即可）
+# 跳过：git commit --no-verify
+
+set -e
+
+root=$(git rev-parse --show-toplevel)
+
+# 只看已暂存的源码文件；没暂存就不打扰
+staged=$(git diff --cached --name-only -- llm.js server.js store.js config.example.json public/ tools/sync-dist.js || true)
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+NODE_BIN=$(command -v node || echo node)
+"$NODE_BIN" "$root/tools/sync-dist.js"
+
+# 同步后 dist 可能变了，重新暂存（只加 dist，不动其它已暂存内容）
+git add -A dist

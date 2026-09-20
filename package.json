@@ -2,7 +2,12 @@
   "name": "mimo-train-live",
   "version": "1.4.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "训练实况看板：指标曲线 + 指标讲解（固定文案 + AI 讲解）",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
     "start": "node server.js",
     "setup": "node scripts/setup.js",
@@ -17,5 +22,10 @@
   "optionalDependencies": {
     "node-sqlite3-wasm": "^0.8.60"
   },
-  "_deps_note": "正常情况用不到它：Node ≥22.5 自带 node:sqlite。只有 Node 太旧时才由它兜底（纯 wasm，无需编译），所以放在 optionalDependencies —— 装不上也不影响安装流程"
+  "_deps_note": "正常情况用不到它：Node ≥22.5 自带 node:sqlite。只有 Node 太旧时才由它兜底（纯 wasm，无需编译），所以放在 optionalDependencies —— 装不上也不影响安装流程",
+  "devDependencies": {
+    "jsdom": "^30.1.0"
+  },
+  "_dev_note": "只开发用：几组测试要在 Node 里加载真实的前端页面跑断言，需要 jsdom。它不进 dist.zip —— 使用者拿到的分发包仍然是零依赖",
+  "_engines_note": "22.5 是 node:sqlite 内置的下限。低于它也能跑（装上 node-sqlite3-wasm 兜底即可），所以这是提醒而非硬门槛：npm 默认只警告，不会拦住安装"
 }

@@ -32,6 +32,7 @@ const DIST_COMMENT = 'AI 解说配置。默认关闭（enabled=false）——此
  * 唯一的可选依赖是 node-sqlite3-wasm —— 给 Node <22.5 的机器兜底（纯 wasm，
  * 不用编译）。本机 npm install 过就一起打进 dist/node_modules，目标机器
  * 解压即用；没装也不影响，新版 Node 用内置驱动。
+ * devDependencies（jsdom，只有跑测试才用）不打进 dist —— 使用者拿到的包不因它变重。
  * 真正会出错的是内部模块：以前 ROOT_FILES 是写死的四个文件，哪天新加一个根级
  * js 被 server.js require 了，构建不会带上它，dist 一跑就 MODULE_NOT_FOUND。
  * 所以改成从入口递归解析 require，并在构建后再校验一遍（见 verifyDistDeps）。 */

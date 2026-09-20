@@ -23,8 +23,11 @@ dist.zip
 
 # ── 依赖 ────────────────────────────────────────────
 node_modules/
-package-lock.json
 yarn.lock
+
+# package-lock.json 入库（不在这里忽略）：本项目是应用，不是给别人当依赖的库。
+# 提交 lockfile 才能保证别人 npm install 装到的 node-sqlite3-wasm 版本，
+# 跟本地验证过的完全一致。只有发布给别人的库才该忽略 lock。
 
 # ── 系统与编辑器 ────────────────────────────────────
 .DS_Store

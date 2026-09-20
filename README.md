@@ -19,16 +19,22 @@
 node server.js          # 打开 http://127.0.0.1:8787
 ```
 
-存档用 SQLite，跑在 Node ≥22.5 上时**零第三方依赖，不用 npm install**
-（用内置的 `node:sqlite`）。Node 太旧时由 `node-sqlite3-wasm` 兜底
-（纯 WebAssembly，不用编译），那种机器才需要 `npm install`。
-还要能访问 `https://mimo.xiaomi.com/rl/`。
+**跑服务**不需要装任何东西：存档用 SQLite，Node ≥22.5 上有内置的 `node:sqlite`，
+零第三方依赖。Node 太旧时由 `node-sqlite3-wasm` 兜底（纯 WebAssembly，不用编译），
+那种机器才需要 `npm install`。还要能访问 `https://mimo.xiaomi.com/rl/`。
+
+**改代码**才需要 `npm install` —— 装的是 jsdom（测试要在 Node 里加载前端页面），
+属于 `devDependencies`，不会进分发包。
 
 第一次克隆仓库后跑一次：
 
 ```bash
+npm install             # 装测试用的 jsdom（只开发用，跑服务不用）
 npm run setup           # 登记 git 钩子目录（见「开发约定」）
 ```
+
+Node 版本要求写在 `package.json` 的 `engines` 里（`>=22.5`，低于它也能跑，
+只是要靠 wasm 兜底，所以 npm 只警告不拦），`.nvmrc` 里写的是 `22`。
 
 ## 常用命令
 
@@ -139,10 +145,15 @@ cp config.example.json config.json
   差异都在 `sqlite.js` 里抹平，`store.js` 只当它是 `node:sqlite`。
   wasm 版还额外处理一件事：碰到 WAL 模式的库（新 Node 跑过、或进程被强杀留下的）
   会自动降级为普通模式打开，WAL 文件另存留底 —— 否则它连打都打不开。
+- **依赖分两类**：`optionalDependencies` 是给**使用者**的（Node 太旧时的 wasm 兜底，
+  装不上也不影响）；`devDependencies` 是给**开发者**的（jsdom，跑测试用），
+  不进 `dist.zip`。`package-lock.json` 已入库 —— 本项目是应用不是库，
+  提交 lockfile 才能保证别人装到的兜底包版本跟本地验证过的一致。
 - **测试**：改完跑 `npm test`（= `node scripts/run-tests.js`）。AI 相关的用例用本地
   mock 服务，不依赖外网模型。用例都在 `test/`，由 `scripts/run-tests.js` 串行跑完再
   汇总，失败不中断；只跑一组用 `node scripts/run-tests.js --only=store`，
   `--list` 看有哪些，`--all` 连需要真实模型的 `ai-prompt-test` 一起跑。
+  找不到 jsdom 时入口会提前提示（跑 `npm install` 即可），不用手工设 `NODE_PATH`。
   `server-config-test` 永远排在最后，它会真起服务占端口，并停掉占用 8787 的进程
   （要验证兜底端口），跑完记得重启开发服务。
 

@@ -81,7 +81,8 @@ if (!picked.length) {
 
 if (!hasJsdom()) {
   console.log('注意：没找到 jsdom，用到它的用例会以 MODULE_NOT_FOUND 失败。');
-  console.log('      npm install jsdom  或者  NODE_PATH=<装了 jsdom 的 node_modules> npm test');
+  console.log('      它已经写在 devDependencies 里，在本目录执行：npm install');
+  console.log('      （装在别的目录时：NODE_PATH=<那个 node_modules> npm test）');
 }
 
 console.log('跑 ' + picked.length + ' / ' + CASES.length + ' 个用例' + (only ? '（--only=' + only + '）' : '') + '\n');

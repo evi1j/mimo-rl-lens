@@ -118,7 +118,7 @@ async function mainFlow() {
   const t0 = Date.now();
   const thinkEl = doc.getElementById('gl-ai-think');
   let sawThink = false, sawLive = false, titleThinking = '', titleWriting = '';
-  let sawTool = false, toolRows = 0;
+  let sawTool = false, toolRows = 0, stepCount = 0;
   while (Date.now() - t0 < 150000) {
     await sleep(250);
     const o = doc.getElementById('gl-ai-out');
@@ -137,11 +137,12 @@ async function mainFlow() {
       if (txt && !titleWriting) titleWriting = tt ? tt.textContent : '';
     }
     if (te && !te.hidden && te.textContent) sawThink = true;
-    // AI 自己调的查询工具，前端要逐条显示出来（否则那十几秒是空白）
-    const tbx = doc.getElementById('gl-ai-tools');
-    if (tbx && !tbx.hidden) {
+    // AI 自己调的查询工具：按「决策 → 调用」分组，每轮一个块
+    const sbx = doc.getElementById('gl-ai-steps');
+    if (sbx && !sbx.hidden) {
       sawTool = true;
-      toolRows = tbx.querySelectorAll('.gl-ai-tool').length;
+      stepCount = sbx.querySelectorAll('.gl-ai-step').length;
+      toolRows = sbx.querySelectorAll('.gl-ai-tool').length;
     }
     const b = doc.querySelector('.gl-ai-btn[data-ai="dynsam/avg@n"]');
     const done = (b && b.textContent === '重新生成') ||
@@ -164,15 +165,30 @@ async function mainFlow() {
     console.log('    末帧:', JSON.stringify(String(finalTxt).slice(0, 60)));
   }
 
-  check('AI 查过的工具在页面上逐条显示', sawTool && toolRows > 0,
-    '可见=' + sawTool + ' 行数=' + toolRows);
-
-  // 查询决策框里应该有「已调用」标记，把「决策 → 调用」的轮次对应起来
-  const planEl = doc.getElementById('gl-ai-plan');
-  const planTxt = planEl ? planEl.textContent : '';
-  check('查询决策区含「已调用」标记（轮次对应）',
-    !!planEl && !planEl.hidden && /已调用/.test(planTxt),
-    'plan 可见=' + (planEl && !planEl.hidden) + ' 文本长度=' + planTxt.length);
+  /* 「决策 → 调用」按轮分组：每轮一个独立块，块里有该轮的决策思考 + 调用记录。
+     以前是把所有决策揉一个框、再插「已调用」标记，多轮时对不上号，已废弃。
+     注意：查不查工具由模型决定（第一轮是 required，之后它可以选择不再查），
+     所以「没有块」是合法结果，只在真的发生调用时才校验分组结构。 */
+  const stepsBox = doc.getElementById('gl-ai-steps');
+  const stepEls = stepsBox ? Array.prototype.slice.call(stepsBox.querySelectorAll('.gl-ai-step')) : [];
+  if (!isErr && (sawTool || stepEls.length)) {
+    check('AI 查过的工具在页面上逐条显示', sawTool && toolRows > 0,
+      '可见=' + sawTool + ' 行数=' + toolRows);
+    check('每一轮「决策 → 调用」单独成块', stepEls.length > 0,
+      '块数=' + stepEls.length + '（轮数）');
+    check('每个块都有该轮的调用记录', stepEls.every(function (el) {
+      return el.querySelectorAll('.gl-ai-tool').length > 0;   // 没调用的轮不建块
+    }), stepEls.map(function (el) { return el.querySelectorAll('.gl-ai-tool').length; }).join('/'));
+    check('块标题带轮次', stepEls.every(function (el) {
+      return /查询决策 · 第 \d+ 轮/.test(el.textContent || '');
+    }));
+    check('块里有这一轮的决策思考', stepEls.every(function (el) {
+      const b = el.querySelector('.gl-ai-think-b');
+      return !!b && (b.textContent || '').length > 0;
+    }));
+  } else {
+    check('模型未调工具时不留空的决策块', stepEls.length === 0, '块数=' + stepEls.length);
+  }
 
   /* 思考阶段的状态提示：转圈 + 标题改字，正文开始后改回来 */
   check('思考阶段有转圈标记 is-live', sawLive);

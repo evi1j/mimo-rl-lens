@@ -322,7 +322,7 @@ const server = http.createServer(async (req, res) => {
         payload,
         function (t) { return send({ delta: t }); },
         // 工具轮的思考带 phase='tool'，前端放进「查询决策」区；其余是分析数据的思考
-        function (t, phase) { return send({ think: t, phase: phase || 'main' }); },
+        function (t, phase, round) { return send({ think: t, phase: phase || 'main', round: round || 0 }); },
         function (info) { return send({ tool: info }); }); // AI 查了什么，前端实时显示
       send({ done: true, model: out.model, toolRounds: out.toolRounds || 0 });
     } catch (e) {

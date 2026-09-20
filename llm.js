@@ -626,6 +626,13 @@ async function streamToolChat(cfg, messages, toolChoice, onThink) {
 async function toolPhase(cfg, messages, onTool, onThink) {
   let rounds = 0;
   for (let i = 0; i < MAX_TOOL_ROUNDS; i++) {
+    /* 一轮 = 模型想一次 + 紧接着的若干次调用。把它编号带给前端，
+       前端才能把「决策 → 调用」按轮分组，而不是把同轮的几次调用拆成几组。 */
+    const rn = i + 1;
+    const onThinkR = onThink ? function (t, ph) { return onThink(t, ph || 'tool', rn); } : null;
+    const onToolR = onTool ? function (info) {
+      return onTool(Object.assign({ round: rn }, info));
+    } : null;
     let out;
     try {
       // 工具轮单独压低超时：它应当秒回，不该占满讲解的时间预算
@@ -633,7 +640,7 @@ async function toolPhase(cfg, messages, onTool, onThink) {
         Object.assign({}, cfg, { timeoutMs: 30000 }),
         messages,
         rounds === 0 ? 'required' : 'auto',
-        onThink
+        onThinkR
       );
     } catch (e) {
       // 流式工具轮不通（服务不支持 / 参数不认）就退回非流式，别直接放弃查数据
@@ -659,7 +666,7 @@ async function toolPhase(cfg, messages, onTool, onThink) {
       let args = {};
       try { args = JSON.parse(fn.arguments || '{}'); } catch (e) { args = {}; }
       const res = runTool(fn.name, args);
-      if (onTool && onTool({
+      if (onToolR && onToolR({
         name: fn.name, args: args, summary: summarizeToolResult(fn.name, res),
       }) === false) return rounds; // 客户端已断开
       messages.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(res) });
@@ -764,7 +771,7 @@ async function explainMetric(payload, onDelta, onThink, onTool) {
       return true;
     } : null;
     // 工具轮的思考标记成 'tool'，前端放进「查询决策」区，跟后面分析数据的思考分开
-    const onThinkTool = onThink ? function (t) { return onThink(t, 'tool'); } : null;
+    const onThinkTool = onThink ? function (t, ph, rn) { return onThink(t, 'tool', rn); } : null;
     rounds = await toolPhase(cfg, messages, onToolSafe, onThinkTool);
     if (rounds) console.log('ai explain: 工具轮 ' + rounds + ' 次，随后生成正文');
     if (aborted) return { model: '', toolRounds: rounds, aborted: true };

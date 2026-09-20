@@ -29,6 +29,8 @@ const DIST_COMMENT = 'AI 解说配置。默认关闭（enabled=false）——此
 
 // 根级要同步的文件
 const ROOT_FILES = ['llm.js', 'server.js', 'store.js', 'config.example.json'];
+// 分发包专属材料的源文件（dist/ 不入库，这些东西得有地方存）
+const DEPLOY_FILES = ['README.md', 'start.command', 'start.bat'];
 // public/ 下参与同步的后缀（其余如 .map、临时文件不动）
 const PUB_EXT = ['.js', '.css', '.html', '.svg', '.png', '.ico', '.json'];
 
@@ -91,6 +93,14 @@ function syncPublic() {
 }
 
 ROOT_FILES.forEach(function (f) { syncFile(f, f); });
+// 分发包里的说明与启动脚本，源码目录没有，从 deploy/ 取
+DEPLOY_FILES.forEach(function (f) {
+  syncFile('deploy/' + f, f);
+  if (!CHECK && /\.command$/.test(f)) {
+    const dst = path.join(DIST, f);
+    if (fs.existsSync(dst)) fs.chmodSync(dst, 0o755); // 双击要能直接跑
+  }
+});
 syncPublic();
 
 /* dist/config.json 由模板脱敏生成 —— 绝不复制本机 config.json（那里有真实 key）。
@@ -161,6 +171,8 @@ if (cfgBuildMsg) say(cfgBuildMsg, '· ');
 if (ZIP) {
   const out = path.join(ROOT, 'dist.zip');
   try { if (fs.existsSync(out)) fs.unlinkSync(out); } catch (e) { /* ignore */ }
-  execFileSync('zip', ['-r', '-q', 'dist.zip', 'dist'], { cwd: ROOT, stdio: 'inherit' });
+  // 排除运行产物：dist/data 是看板跑起来后落库的 SQLite，不该进分发包
+  execFileSync('zip', ['-r', '-q', 'dist.zip', 'dist', '-x', 'dist/data/*', 'dist/.DS_Store'],
+    { cwd: ROOT, stdio: 'inherit' });
   console.log('· 已打包 dist.zip');
 }

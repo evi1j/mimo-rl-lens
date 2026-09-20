@@ -1,7 +1,6 @@
 # ── 运行时生成的数据 ────────────────────────────────
 # SQLite 数据库、WAL 日志、旧 JSON 存档，首次启动自动重建
 data/
-dist/data/
 *.db
 *.db-wal
 *.db-shm
@@ -12,10 +11,14 @@ narrator.json.migrated
 # 本机 config.json 里有真实 API key，绝不入库。
 # 模板见 config.example.json，克隆后复制一份再填。
 config.json
-!dist/config.json
 
-# ── 打包产物 ────────────────────────────────────────
-# 可由 dist/ 重新压缩生成，不入库
+# ── 构建产物 ────────────────────────────────────────
+# dist/ 是打包分发用的目录，由 `node tools/sync-dist.js` 从源码生成，
+# 只在要打包时才构建 —— 不入库，免得源码提交和部署产物提交混在一起。
+# 分发包里的 README、start.command、start.bat 源文件在 deploy/。
+dist/
+
+# 压缩包也是构建产物，由 `node tools/sync-dist.js --zip` 生成
 dist.zip
 *.zip
 *.tar.gz

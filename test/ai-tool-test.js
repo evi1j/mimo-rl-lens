@@ -3,8 +3,8 @@
    前半部分直接调模块（秒级），后半部分打真实服务跑一次完整讲解（约 1~2 分钟）。 */
 
 const path = require('path');
-const llm = require(path.join(__dirname, '..', 'llm.js'));
-require(path.join(__dirname, '..', 'store.js'));
+const llm = require(path.join(__dirname, '..', 'src', 'llm.js'));
+require(path.join(__dirname, '..', 'src', 'store.js'));
 
 let pass = 0;
 let fail = 0;

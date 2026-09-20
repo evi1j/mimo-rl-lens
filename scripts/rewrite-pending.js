@@ -3,8 +3,8 @@
    注意：改完需要重启看板服务，服务才会重新从库里读到新内容。
    用法：node scripts/rewrite-pending.js [最多处理几条] */
 const path = require('path');
-const sqlite = require('../sqlite.js'); // 驱动适配：内置 node:sqlite 或 wasm 兜底
-const llm = require('../llm.js');
+const sqlite = require('../src/sqlite.js'); // 驱动适配：内置 node:sqlite 或 wasm 兜底
+const llm = require('../src/llm.js');
 
 const DB_PATH = path.join(__dirname, '..', 'data', 'board.db');
 const LIMIT = Number(process.argv[2]) || 20;

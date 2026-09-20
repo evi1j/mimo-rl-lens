@@ -17,7 +17,7 @@ let raw;
 try {
   raw = execSync("curl -s --noproxy '*' http://127.0.0.1:8787/api/narrator", { encoding: 'utf8' });
 } catch (e) {
-  console.log('✘ 取不到 /api/narrator，请先启动服务：node server.js');
+  console.log('✘ 取不到 /api/narrator，请先启动服务：node src/server.js');
   process.exit(1);
 }
 const data = JSON.parse(raw);

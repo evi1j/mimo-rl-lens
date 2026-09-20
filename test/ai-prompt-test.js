@@ -1,7 +1,7 @@
 /* 用当前 SYSTEM_PROMPT 对一条构造事件试跑一次 AI 解说，用来检查 prompt 实际效果。
    用法：node test/ai-prompt-test.js
    不影响看板服务，也不会写库。 */
-const llm = require('../llm.js');
+const llm = require('../src/llm.js');
 
 /* 挑一个最能体现「知识点」的事件：满分率飙升——
    背后是 advantage 方差归零、梯度消失，纯机制，没法靠比喻糊弄过去。 */

@@ -4,8 +4,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const { at } = require('./paths.js');
 
-const CONFIG_FILE = path.join(__dirname, 'config.json');
+const CONFIG_FILE = at('config.json');
 
 const DEFAULTS = {
   enabled: false,

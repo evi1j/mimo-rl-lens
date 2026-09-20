@@ -8,8 +8,8 @@
    用法：NODE_PATH=<node workspace>/node_modules node test/ai-retry-test.js */
 const http = require('http');
 const path = require('path');
-const llm = require(path.join(__dirname, '..', 'llm.js'));
-require(path.join(__dirname, '..', 'store.js'));
+const llm = require(path.join(__dirname, '..', 'src', 'llm.js'));
+require(path.join(__dirname, '..', 'src', 'store.js'));
 
 let pass = 0, fail = 0;
 function check(name, ok, extra) {

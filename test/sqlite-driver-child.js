@@ -4,7 +4,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const store = require(path.join(__dirname, '..', 'store.js'));
+const store = require(path.join(__dirname, '..', 'src', 'store.js'));
 
 const out = { driver: null, enabled: store.enabled, error: null, steps: {} };
 

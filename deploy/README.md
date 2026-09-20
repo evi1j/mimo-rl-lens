@@ -20,7 +20,7 @@
 |---|---|
 | macOS / Linux | 双击 `start.command`（首次可能需右键 → 打开），或终端执行 `./start.command` |
 | Windows | 双击 `start.bat` |
-| 任意平台 | 在本目录执行 `node server.js` |
+| 任意平台 | 在本目录执行 `node src/server.js` |
 
 启动后自动打开 http://127.0.0.1:8787 。关闭终端窗口即停止服务。
 
@@ -30,7 +30,7 @@
 { "server": { "port": 8899, "host": "0.0.0.0" } }
 ```
 
-临时换一次不想改文件，就用环境变量（优先级更高）：`PORT=8899 node server.js`。
+临时换一次不想改文件，就用环境变量（优先级更高）：`PORT=8899 node src/server.js`。
 
 ## 用其他设备访问（手机 / 另一台电脑）
 
@@ -48,18 +48,19 @@
 **访问不到时排查**：确认服务正在运行（本机访问 http://127.0.0.1:8787 应正常）→
 确认两台设备在同一网络 → 检查系统防火墙是否拦截了入站连接（macOS 首次运行可能会弹窗询问，选「允许」）→ 确认 IP 没填错。
 
-**只想本机访问**（更安全）：启动时指定 `HOST=127.0.0.1 node server.js`。
+**只想本机访问**（更安全）：启动时指定 `HOST=127.0.0.1 node src/server.js`。
 
 ## 目录结构
 
 ```
 server.js        主服务：反代上游接口，提供 /api/*
+paths.js         根目录探测（开发时源码在 src/ 下，这里已摊平到根）
 sqlite.js        SQLite 驱动适配（内置 node:sqlite / wasm 兜底）
 store.js         SQLite 存档层（指标 + 解说）
 llm.js           AI 解说客户端（默认关闭）
 config.json      AI 配置
 public/          前端页面（index.html + 三个 js + css）
-start.command    macOS / Linux 启动脚本
+start.command    macOS / Linux 启动脚本（双击即可，不用管 src/ 在哪）
 start.bat        Windows 启动脚本
 data/            运行时自动生成的数据库（首次启动创建，可删）
 ```
@@ -152,7 +153,7 @@ GRPO 的组内相对优势、`advantage=(r−mean)/std`、全对/全错时组内
 - **启动日志出现「存档不可用」** —— 同上：既没有内置 `node:sqlite`，
   也没装 wasm 兜底包。看板还能看实时数据，但历史不保存。
 - **8787 端口被占用** —— 换端口：改 `config.json` 的 `server.port` 后重启，
-  或临时用 `PORT=8899 node server.js`（环境变量优先，不用改文件）。
+  或临时用 `PORT=8899 node src/server.js`（环境变量优先，不用改文件）。
 - **只想自己能访问** —— 把 `config.json` 里 `server.host` 改成 `127.0.0.1` 并重启。
 - **图表空白 / 数据不更新** —— 检查能否访问 https://mimo.xiaomi.com/rl/ 。
 - **双击 .command 提示「无法打开」** —— macOS 安全限制，右键该文件选「打开」；

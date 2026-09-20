@@ -9,7 +9,7 @@
     "node": ">=22.5"
   },
   "scripts": {
-    "start": "node server.js",
+    "start": "node src/server.js",
     "setup": "node scripts/setup.js",
     "build": "node scripts/sync-dist.js",
     "build:check": "node scripts/sync-dist.js --check",

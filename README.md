@@ -16,7 +16,7 @@
 ## 快速开始
 
 ```bash
-node server.js          # 打开 http://127.0.0.1:8787
+node src/server.js      # 打开 http://127.0.0.1:8787
 ```
 
 **跑服务**不需要装任何东西：存档用 SQLite，Node ≥22.5 上有内置的 `node:sqlite`，
@@ -40,7 +40,7 @@ Node 版本要求写在 `package.json` 的 `engines` 里（`>=22.5`，低于它�
 
 | 命令 | 作用 |
 |---|---|
-| `npm start` | 起服务（= `node server.js`） |
+| `npm start` | 起服务（= `node src/server.js`） |
 | `npm test` | 跑全部回归（`scripts/run-tests.js`，11 组用例、300+ 项断言） |
 | `npm run setup` | 一次性配置：`core.hooksPath` 指向 `.githooks/`；缺 `config.json` 时从模板生成 |
 | `npm run build` | 构建 `dist/`（打包分发时才需要） |
@@ -52,11 +52,11 @@ Node 版本要求写在 `package.json` 的 `engines` 里（`>=22.5`，低于它�
 ## 架构
 
 ```
-浏览器 ──► server.js ──► 上游 https://mimo.xiaomi.com/rl/
+浏览器 ──► src/server.js ──► 上游 https://mimo.xiaomi.com/rl/
               │              （5 秒缓存，礼貌轮询）
               ├─► 静态页面 public/
-              ├─► store.js ──► data/board.db (SQLite)
-              └─► llm.js ──► 你的 OpenAI 兼容接口（可选，默认关闭）
+              ├─► src/store.js ──► data/board.db (SQLite)
+              └─► src/llm.js ──► 你的 OpenAI 兼容接口（可选，默认关闭）
 ```
 
 **数据落库**：代理 `/api/series`、`/api/benchmarks` 时旁路写入 SQLite，浏览即缓存；
@@ -76,10 +76,12 @@ Node 版本要求写在 `package.json` 的 `engines` 里（`>=22.5`，低于它�
 ## 目录结构
 
 ```
-server.js        主服务：反代上游、静态托管、/api/*、流式讲解接口
-sqlite.js        SQLite 驱动适配（内置 node:sqlite / wasm 兜底，抹平 API 差异）
-store.js         SQLite 存档层（建表、落库、查询）
-llm.js           AI 客户端：工具定义、流式讲解、分层重试
+src/             服务端源码
+  server.js        主服务：反代上游、静态托管、/api/*、流式讲解接口
+  paths.js         根目录探测（源码在 src/ 下，分发包是扁平的，见下）
+  sqlite.js        SQLite 驱动适配（内置 node:sqlite / wasm 兜底，抹平 API 差异）
+  store.js         SQLite 存档层（建表、落库、查询）
+  llm.js           AI 客户端：工具定义、流式讲解、分层重试
 public/          前端：index.html + app.js + glossary.js（词库）+ narrator*.js（规则解说）+ style.css
 test/            回归用例（12 个 *-test.js + 一个子进程夹具）
 scripts/         开发与运维脚本：run-tests（统一入口）、sync-dist 构建、
@@ -88,6 +90,15 @@ deploy/          分发包专属材料：使用者 README、start.command、star
 .githooks/       提交钩子（pre-commit：自动补配置模板）
 config.example.json  配置模板（入库）；config.json 是本机真实配置（不入库）
 ```
+
+源码在 `src/` 下，但**分发包里是扁平的**（`dist/server.js` 与 `dist/public/` 同级）——
+使用者是双击 `start.command` 的人，不该让他去 `src/` 里找入口。构建时 `src/*.js`
+会被拷到 `dist/` 根层。
+
+代价是两级目录层级不一致：`__dirname` 在源码里指向 `项目根/src`、在分发包里指向
+`dist/`，差一层。所以**所有跨目录的路径都必须走 `src/paths.js` 的 `at()`**
+（`at('config.json')`、`at('public')`、`at('data')`），它按"public/ 跟谁同级谁就是根"
+判断根目录。别在 `src/` 下写裸 `__dirname` 去取这些文件，那只在开发时对。
 
 ## 配置
 
@@ -114,7 +125,7 @@ cp config.example.json config.json
 **这一项是唯一需要重启才生效的配置**（端口只能在启动时绑定）。
 
 优先级：`PORT` / `HOST` 环境变量 > `config.json` > 内置默认（8787 / 0.0.0.0）。
-想临时换个端口试试不用改文件：`PORT=8799 node server.js`。
+想临时换个端口试试不用改文件：`PORT=8799 node src/server.js`。
 端口写错（`"8787abc"`、`70000`）不会崩，会回退 8787 并在启动时打印提示。
 
 `config.json` 已在 `.gitignore` 里（含真实 API key，绝不入库）。
@@ -133,7 +144,7 @@ cp config.example.json config.json
   情况下不需要 `node_modules`，使用者也不用 `npm install`；构建脚本在本机装了兜底包时
   会把它一起拷进 `dist/node_modules`，旧 Node 的机器解压即用。
   构建脚本真正要操心的是**内部模块**——
-  它从入口 `server.js` 递归解析 `require` 自动得出要拷贝哪些根级模块，
+  它从入口 `src/server.js` 递归解析 `require` 自动得出要拷贝哪些根级模块，
   不靠手写清单（以前写死四个文件，新加模块就会漏进 dist，一跑就 MODULE_NOT_FOUND）。
   构建完还会校验一遍：dist 里每个 `require`、页面每个 `src`/`href` 的目标文件都得存在，
   缺了就报错并挡住打包。

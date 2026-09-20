@@ -14,8 +14,9 @@
 const fs = require('fs');
 const path = require('path');
 const sqlite = require('./sqlite');
+const { at } = require('./paths.js');
 
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = at('data');
 // 正常情况就是 data/board.db。测试会用 MIMO_DB_FILE 指到临时库，
 // 免得不同驱动的用例互相踩（store.js 是单例，一个进程只能认一个库）。
 const DB_FILE = process.env.MIMO_DB_FILE || path.join(DATA_DIR, 'board.db');

@@ -3,9 +3,9 @@
    注意：store.js 是单例，直接用 data/board.db；写入的假数据用 __test__ 前缀，跑完清理。 */
 
 const path = require('path');
-const store = require(path.join(__dirname, '..', 'store.js'));
+const store = require(path.join(__dirname, '..', 'src', 'store.js'));
 // 走适配层而不是直接 require('node:sqlite')：本机 Node 太旧时测试也能跑（wasm 兜底）
-const sqlite = require(path.join(__dirname, '..', 'sqlite.js'));
+const sqlite = require(path.join(__dirname, '..', 'src', 'sqlite.js'));
 
 const DB = process.env.MIMO_DB_FILE || path.join(__dirname, '..', 'data', 'board.db');
 let pass = 0;

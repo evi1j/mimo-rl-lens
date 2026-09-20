@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFileSync } = require('child_process');
-const sqlite = require(path.join(__dirname, '..', 'sqlite.js'));
+const sqlite = require(path.join(__dirname, '..', 'src', 'sqlite.js'));
 
 const ROOT = path.join(__dirname, '..');
 const CHILD = path.join(__dirname, 'sqlite-driver-child.js');
@@ -136,7 +136,7 @@ function assertDriver(driver, res) {
     const db = path.join(TMP, 'wal.db');
     const script = [
       "process.env.MIMO_SQLITE_DRIVER='builtin';",
-      "const sql = require(" + JSON.stringify(path.join(__dirname, '..', 'sqlite.js')) + ");",
+      "const sql = require(" + JSON.stringify(path.join(__dirname, '..', 'src', 'sqlite.js')) + ");",
       "const h = sql.open(" + JSON.stringify(db) + ");",
       "h.db.exec('PRAGMA journal_mode = WAL');",
       "h.db.exec('CREATE TABLE IF NOT EXISTS t (a INTEGER)');",

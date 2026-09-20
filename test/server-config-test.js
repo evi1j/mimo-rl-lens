@@ -35,7 +35,7 @@ function writeCfg(c) { fs.writeFileSync(CFG, JSON.stringify(c, null, 2) + '\n');
 /* 起一次服务，返回它打印的 { host, port } 或 { log }（没起来时给全量输出） */
 function boot(env) {
   return new Promise(function (resolve) {
-    const p = spawn(process.execPath, ['server.js'], {
+    const p = spawn(process.execPath, ['src/server.js'], {
       cwd: ROOT,
       env: Object.assign({}, process.env, env || {}),
     });
@@ -65,13 +65,13 @@ function boot(env) {
 
 /* 兜底端口就是 8787，测试要真把它占住才能验证「回退到 8787」和「默认值 8787」。
    所以先把占用 8787 的进程停掉 —— 通常是自己起的开发服务，测完手动重启即可
-   （node server.js）。这也是它在 npm test 里排在最后的原因：别影响前面的用例。 */
+   （node src/server.js）。这也是它在 npm test 里排在最后的原因：别影响前面的用例。 */
 function freeDefaultPort() {
   try {
     const pids = execSync('lsof -ti tcp:8787 2>/dev/null || true', { encoding: 'utf8' }).trim();
     if (!pids) return;
     console.log('\n（为验证兜底端口 8787，先停掉占用它的进程：' + pids.split('\n').join(' ') +
-      '，测完需手动 node server.js 重启）');
+      '，测完需手动 node src/server.js 重启）');
     execSync('kill -9 ' + pids.split('\n').join(' ') + ' 2>/dev/null || true', { stdio: 'ignore' });
   } catch (e) { /* 没人占用，正好 */ }
 }
@@ -138,7 +138,7 @@ async function main() {
     if (had) fs.copyFileSync(BACKUP, CFG);
     else if (fs.existsSync(CFG)) fs.unlinkSync(CFG);
     console.log('\n已还原本机 config.json');
-    console.log('（测试停掉了占用 8787 的进程，需要的话手动重启：node server.js）');
+    console.log('（测试停掉了占用 8787 的进程，需要的话手动重启：node src/server.js）');
   }
 
   console.log('\n' + (fail === 0 ? '全部通过' : '有失败') + '：' + pass + ' 通过 / ' + fail + ' 失败');

@@ -29,7 +29,7 @@ if curl -s --noproxy '*' -m 2 -o /dev/null "$URL"; then
   echo "看板已经在运行了，直接打开浏览器。"
 else
   echo "正在启动看板（端口 ${PORT:-8787}）..."
-  "$NODE" server.js &
+  "$NODE" src/server.js &
   for i in $(seq 1 30); do
     sleep 0.5
     curl -s --noproxy '*' -m 2 -o /dev/null "$URL" && break

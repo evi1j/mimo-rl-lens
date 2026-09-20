@@ -3,7 +3,7 @@
    1) SSE 里有没有 reasoning_content（决定「查什么」的思考能不能逐字吐出来）
    2) tool_calls 是怎么分片来的（arguments 增量拼接要按 index 累积）
    用法：node scripts/probe-tool-stream.js */
-const llm = require('../llm.js');
+const llm = require('../src/llm.js');
 
 const cfg = llm.loadConfig();
 const url = String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions';

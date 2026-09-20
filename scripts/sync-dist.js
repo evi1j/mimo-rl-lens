@@ -86,9 +86,10 @@ function collectHtmlAssets(entryRel) {
   return out;
 }
 
-const ENTRY = 'server.js';
+const ENTRY = 'src/server.js';
 const autoDeps = Object.keys(collectLocalDeps(ENTRY))
-  .filter(function (f) { return f.indexOf('public/') !== 0; }); // public/ 整目录同步
+  // public/ 整目录同步（这里是 src/public/… 这种「跨到静态资源目录」的引用）
+  .filter(function (f) { return !/(^|\/)public\//.test(f); });
 // 根级要同步的文件：自动解析出来的模块 + 配置模板（给使用者照着填）
 const ROOT_FILES = Array.from(new Set(['config.example.json'].concat(autoDeps)));
 // 分发包专属材料的源文件（dist/ 不入库，这些东西得有地方存）
@@ -154,7 +155,18 @@ function syncPublic() {
   });
 }
 
-ROOT_FILES.forEach(function (f) { syncFile(f, f); });
+/* src/ 下的模块在分发包里是扁平的：dist/server.js 与 dist/public/ 同级。
+   使用者双击 start.command 就好，不该让他去 src/ 里找入口 —— 代价是源码里
+   跨目录的路径都要走 src/paths.js 探测根目录（见那里的说明）。 */
+ROOT_FILES.forEach(function (f) {
+  syncFile(f, f.indexOf('src/') === 0 ? path.basename(f) : f);
+});
+
+/* 旧布局（dist/src/…）的残留整个清掉，否则使用者会看到两份入口 */
+if (PRUNE && fs.existsSync(path.join(DIST, 'src'))) {
+  removed.push('src/');
+  if (!CHECK) fs.rmSync(path.join(DIST, 'src'), { recursive: true, force: true });
+}
 // 分发包里的说明与启动脚本，源码目录没有，从 deploy/ 取
 DEPLOY_FILES.forEach(function (f) {
   syncFile('deploy/' + f, f);

@@ -1,22 +1,23 @@
 /* Local proxy + static server for the mimo-v2.6 RL live board.
    Upstream: https://mimo.xiaomi.com/rl/  (public JSON endpoints)
-   Run: node server.js   ->   http://127.0.0.1:8787            */
+   Run: node src/server.js   ->   http://127.0.0.1:8787            */
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { createEngine } = require('./public/narrator-core.js');
+const { at } = require('./paths.js'); // 根目录探测：源码在 src/，分发包是扁平的
+const { createEngine } = require(at('public', 'narrator-core.js'));
 const llm = require('./llm.js');
 const store = require('./store.js');
 
 /* 端口与监听地址从 config.json 的 server 段读，环境变量可临时覆盖。
    优先级：环境变量 > config.json > 内置默认。
-   环境变量放最高是 Unix 惯例：换端口试试时不必改文件（PORT=8799 node server.js）。
+   环境变量放最高是 Unix 惯例：换端口试试时不必改文件（PORT=8799 node src/server.js）。
    配置项写错（比如端口写成 80abc）不致命，回退默认值并在启动时提示。 */
 function loadServerConfig() {
   let file = {};
   try {
-    file = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+    file = JSON.parse(fs.readFileSync(at('config.json'), 'utf8'));
   } catch (e) {
     // 配置文件缺失或损坏都不致命，走默认值
   }
@@ -37,7 +38,7 @@ const PORT = SERVER_CFG.port;
 // 只想本机访问的话，config.json 里写 "host": "127.0.0.1"，或启动时加 HOST=127.0.0.1 覆盖。
 const HOST = SERVER_CFG.host;
 const UPSTREAM = 'https://mimo.xiaomi.com/rl/';
-const PUBLIC_DIR = path.join(__dirname, 'public');
+const PUBLIC_DIR = at('public');
 const TTL = 5000; // ms — be polite to upstream, the board polls every 10s
 const NARRATOR_MS = 20000; // 解说引擎后台轮询间隔
 

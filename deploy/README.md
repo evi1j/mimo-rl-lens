@@ -60,7 +60,7 @@ store.js         SQLite 存档层（指标 + 解说）
 llm.js           AI 解说客户端（默认关闭）
 config.json      AI 配置
 public/          前端页面（index.html + 三个 js + css）
-start.command    macOS / Linux 启动脚本（双击即可，不用管 src/ 在哪）
+start.command    macOS / Linux 启动脚本（双击即可，它会自己判断入口在哪）
 start.bat        Windows 启动脚本
 data/            运行时自动生成的数据库（首次启动创建，可删）
 ```

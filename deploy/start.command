@@ -1,7 +1,12 @@
 #!/bin/bash
 # MiMo-V2.6 RL 实时看板 — macOS / Linux 启动脚本
 # 用法：双击，或在终端里 ./start.command（需要先 chmod +x start.command）
+# 两种目录布局都能跑：分发包是扁平的（server.js 在本目录），
+# 源码仓库里入口在 src/ 下 —— 下面会自己判断，不用改脚本。
 cd "$(dirname "$0")" || exit 1
+# 站到项目根：分发包里本文件就在根；源码仓库里它在 deploy/ 下，得退一级。
+# 标志是 public/ —— 和 src/paths.js 的判断规则一致（谁跟 public/ 同级，谁就是根）。
+[ -d "public" ] || cd .. || exit 1
 
 URL="http://127.0.0.1:${PORT:-8787}"
 
@@ -29,7 +34,16 @@ if curl -s --noproxy '*' -m 2 -o /dev/null "$URL"; then
   echo "看板已经在运行了，直接打开浏览器。"
 else
   echo "正在启动看板（端口 ${PORT:-8787}）..."
-  "$NODE" server.js &
+  # 入口还差一层：分发包是扁平的（server.js），源码仓库里收在 src/ 下。
+  ENTRY="server.js"
+  [ -f "$ENTRY" ] || ENTRY="src/server.js"
+  if [ ! -f "$ENTRY" ]; then
+    echo "[错误] 在 $(pwd) 下没找到入口（试过 server.js 和 src/server.js）。"
+    echo "       请把本文件放在看板目录里再运行 —— 压缩包要整个解压，别只拖出这一个文件。"
+    read -r -p "按回车键关闭..."
+    exit 1
+  fi
+  "$NODE" "$ENTRY" &
   for i in $(seq 1 30); do
     sleep 0.5
     curl -s --noproxy '*' -m 2 -o /dev/null "$URL" && break

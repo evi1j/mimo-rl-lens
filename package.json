@@ -5,6 +5,7 @@
   "description": "训练实况看板：指标曲线 + 指标讲解（固定文案 + AI 讲解）",
   "scripts": {
     "start": "node server.js",
+    "setup": "node tools/setup.js",
     "build": "node tools/sync-dist.js",
     "build:check": "node tools/sync-dist.js --check",
     "build:zip": "node tools/sync-dist.js --zip",

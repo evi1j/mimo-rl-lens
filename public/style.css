@@ -797,23 +797,33 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
    两套 UI 迟早要各自演进，混着挂类名以后谁都改不动。
    ============================================================ */
 
-/* 悬浮球：固定在右下角，页面滚动时不动 */
+/* 入口按钮：在页面顶栏右侧（原来固定在右下角）。
+   放顶栏的理由：它是最重要的入口，藏在角落里要找；而且抽屉是挤压式的，
+   页面让位之后右下角那块会被推出视野。 */
 .coach-fab {
-  position: fixed; right: 22px; bottom: 22px; z-index: 55;
-  display: flex; align-items: center; gap: 9px;
-  padding: 11px 17px 11px 15px; border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--accent) 15%, var(--panel));
-  color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer;
-  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, .6);
-  transition: transform .12s ease, background .12s ease;
+  flex: none; display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 13px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 12.5px; font-weight: 600; line-height: 1;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  transition: background .12s ease, border-color .12s ease;
 }
-.coach-fab:hover { transform: translateY(-1px); background: color-mix(in srgb, var(--accent) 26%, var(--panel)); }
 .coach-fab::before {
-  content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
-.coach-fab-mark { letter-spacing: .06em; }
+.coach-fab:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* 抽屉开着时按钮留在顶栏并点亮 —— 它这时是「收起教练」的开关。
+   隐藏掉（原来那样）会让顶栏跟着跳一下，而且关抽屉还得去找右上角的 ×。 */
+.coach-fab.is-on {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+}
+/* 窄屏顶栏挤，用短文案。两个 span 都在 DOM 里，靠 CSS 切换，
+   这样不用在 JS 里判断视口、也不会在缩放时闪。 */
+.coach-fab-s { display: none; }
 
 /* 抽屉打开时：页面整体让出右边这一条，内容重排 —— 不是盖在上面。
    原来（纯 fixed 覆盖）右边一列图表会被压在抽屉底下，想对着图问就得来回开关。
@@ -824,8 +834,7 @@ html { transition: padding-right .18s ease; }
 /* 拖动时不能有过渡，否则宽度追着鼠标慢半拍 */
 html.is-coach-resizing { transition: none; }
 html.is-coach-resizing, html.is-coach-resizing * { user-select: none; cursor: col-resize !important; }
-/* 抽屉开着时悬浮球已经没用了（抽屉就是它的展开态），别让它压在抽屉下面 */
-html.coach-open .coach-fab { display: none; }
+/* 抽屉开着时入口按钮点亮（不再隐藏：它是「收起教练」的开关，见 .coach-fab.is-on） */
 /* 宽屏下页面被挤窄而不是被遮住，所以不需要那层压暗 */
 .coach-mask { display: none; }
 
@@ -1205,7 +1214,10 @@ html.is-coach-resizing .coach-drawer { transition: none; }
 
 /* 窄屏没得让位（让了页面就剩一条缝），所以退回覆盖式，并恢复那层压暗与遮罩 */
 @media (max-width: 620px) {
-  .coach-fab { right: 14px; bottom: 14px; padding: 10px 14px; }
+  /* 顶栏挤：教练按钮换成短文案（「教练」），全名还在悬浮说明里 */
+  .coach-fab { padding: 5px 10px; font-size: 12px; }
+  .coach-fab-l { display: none; }
+  .coach-fab-s { display: inline; }
   .coach-drawer { width: 100vw; }
   html.coach-open { padding-right: 0; }
   .coach-grip { display: none; }

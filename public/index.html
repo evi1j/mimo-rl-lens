@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MiMo-V2.6 · RL 实时训练看板</title>
 <meta name="description" content="mimo-v2.6-pro / flash 强化学习训练实时指标面板，数据直连小米官方 trainer 日志。">
-<link rel="stylesheet" href="style.css?v=34">
+<link rel="stylesheet" href="style.css?v=35">
 </head>
 <body>
 
@@ -19,6 +19,15 @@
       </div>
     </div>
     <div class="topbar-right">
+      <!-- 教练的入口放在顶栏：它是最重要的入口，藏在右下角角落里要找，
+           而且抽屉是挤压式的（页面让位而不是被盖住），右下角会被推到看不见的地方。
+           文案写全名 —— 「教练」两个字看不出是谁的教练、能干什么。 -->
+      <button class="coach-fab" id="coach-fab" type="button"
+              title="问 AI 模型训练教练 · 它能查这块板爬下来的全部数据"
+              aria-expanded="false" aria-controls="coach-drawer">
+        <span class="coach-fab-l">AI 模型训练教练</span>
+        <span class="coach-fab-s">教练</span>
+      </button>
       <div class="live-chip" id="live-chip">
         <span class="pulse" aria-hidden="true"></span>
         <span id="live-text">连接中</span>
@@ -265,14 +274,9 @@
 
 <div class="toast" id="toast"></div>
 
-<!-- AI 训练教练：右下角悬浮球 + 右侧对话抽屉。
+<!-- AI 训练教练：顶栏右侧的入口按钮（见 header）+ 右侧对话抽屉。
      和上面那个「图表讲解」抽屉的分工：讲解是你点一张图、它讲这张图、单轮；
      教练是你随口问，它自己决定去查哪些数据，能多轮追问，也能讲纯概念。 -->
-<button class="coach-fab" id="coach-fab" type="button"
-        title="问 AI 训练教练 · 它能查这块板爬下来的全部数据" aria-label="问 AI 训练教练">
-  <span class="coach-fab-mark" aria-hidden="true">教练</span>
-</button>
-
 <div class="coach-mask" id="coach-mask" hidden></div>
 <aside class="coach-drawer" id="coach-drawer" hidden aria-label="AI 训练教练">
   <!-- 左边缘的拖拽把手：拉开抽屉宽度。页面会跟着让位，而不是被盖住 -->
@@ -342,9 +346,9 @@
   </form>
 </aside>
 
-<script src="glossary.js?v=34"></script>
-<script src="narrator.js?v=34"></script>
-<script src="app.js?v=34"></script>
-<script src="coach.js?v=34"></script>
+<script src="glossary.js?v=35"></script>
+<script src="narrator.js?v=35"></script>
+<script src="app.js?v=35"></script>
+<script src="coach.js?v=35"></script>
 </body>
 </html>

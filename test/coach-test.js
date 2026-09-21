@@ -332,11 +332,16 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
   const q = function (sel) { return doc.querySelector(sel); };
   const qa = function (sel) { return Array.from(doc.querySelectorAll(sel)); };
 
-  check('悬浮球在页面上', !!$('coach-fab'));
+  /* 入口在顶栏，不在右下角悬浮：它是最重要的入口，藏在角落里要找；
+     而且抽屉是挤压式的，页面让位之后右下角那块会被推出视野。 */
+  check('入口按钮在顶栏里', !!$('coach-fab') && !!$('coach-fab').closest('.topbar'),
+    $('coach-fab') ? String($('coach-fab').parentNode.className) : '没有按钮');
+  check('按钮写着全名（「教练」两个字看不出是谁的教练）',
+    /AI 模型训练教练/.test($('coach-fab').textContent), $('coach-fab').textContent);
   check('教练抽屉初始是收起的', $('coach-drawer').hidden === true);
   click($('coach-fab'));
   await sleep(60);
-  check('点球打开抽屉', $('coach-drawer').hidden === false);
+  check('点它打开抽屉', $('coach-drawer').hidden === false);
   check('首次打开有欢迎语（本地文案，不烧 token）',
     /AI 训练教练/.test($('coach-body').textContent) && pkgs.length === 0);
   check('给了快捷问题', qa('.coach-chip').length >= 3, qa('.coach-chip').length + ' 个');
@@ -458,15 +463,25 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
   await sleep(30);
   check('可以再打开', $('coach-ctx-sw').getAttribute('aria-pressed') === 'true');
 
-  console.log('\n=== 前端：快捷问题与关闭 ===');
+  console.log('\n=== 前端：入口是开关，点与关闭 ===');
+  // 这时抽屉是开着的，顶栏那个入口现在按一下是收起
   click($('coach-fab'));
   await sleep(30);
-  // 欢迎语 + 三轮回答 = 4 块；再点球不该又插一条欢迎语
-  check('再点球不会重复插欢迎语（已有对话时不重来）',
+  check('再点顶栏入口就收起（不用去找右上角的 ×）', $('coach-drawer').hidden === true);
+  check('收起后入口回到未点亮（不再显示为「正在用」）',
+    !$('coach-fab').classList.contains('is-on') && $('coach-fab').getAttribute('aria-expanded') === 'false');
+  click($('coach-fab'));
+  await sleep(30);
+  // 欢迎语 + 三轮回答 = 4 块；再打开不该又插一条欢迎语
+  check('再打开不会重复插欢迎语（已有对话时不重来）',
     qa('.coach-msg-ai').length === 4, qa('.coach-msg-ai').length + ' 块');
+  check('抽屉开着时顶栏入口是点亮的',
+    $('coach-fab').classList.contains('is-on') && $('coach-fab').getAttribute('aria-expanded') === 'true');
   click($('coach-close'));
   await sleep(30);
-  check('关闭后抽屉收起', $('coach-drawer').hidden === true);
+  check('右上角的 × 照样能关', $('coach-drawer').hidden === true);
+  check('× 关掉之后顶栏入口也回到未点亮',
+    !$('coach-fab').classList.contains('is-on'));
 
   console.log('\n=== 前端：刷新后恢复上次的对话 ===');
   /* 库里那份历史是页面加载时（bind）取的。这里直接调 load() 模拟「刷新后重新打开」，

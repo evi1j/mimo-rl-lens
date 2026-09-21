@@ -1000,6 +1000,7 @@
 
     d.hidden = false;
     if (m) m.hidden = false;
+    setFab(true);
     closeSheet();   // 上次如果停在「全部对话」那一层，这次打开直接回到对话
     /* 关键的一行：给页面加右边距，让内容重排。少了它就是「盖在上面」——
        右边那列图表会被压在抽屉底下，想对着图问就得来回开关。 */
@@ -1018,10 +1019,20 @@
     if (q) setTimeout(function () { try { q.focus(); } catch (e) {} }, 30);
   }
 
+  /* 顶栏那个按钮的状态：抽屉开着就点亮，表示「再点一下是收起」 */
+  function setFab(on) {
+    var f = $("coach-fab");
+    if (!f) return;
+    f.classList.toggle("is-on", !!on);
+    f.setAttribute("aria-expanded", on ? "true" : "false");
+    f.title = on ? "收起 AI 模型训练教练" : "问 AI 模型训练教练 · 它能查这块板爬下来的全部数据";
+  }
+
   function closePanel() {
     var d = $("coach-drawer"), m = $("coach-mask");
     if (d) d.hidden = true;
     if (m) m.hidden = true;
+    setFab(false);
     closeSheet();
     document.documentElement.classList.remove("coach-open");   // 页面拿回整屏
   }
@@ -1074,7 +1085,14 @@
     var fab = $("coach-fab");
     if (!fab) return;
 
-    fab.addEventListener("click", openPanel);
+    /* 顶栏那个入口按钮现在是开关：抽屉开着时点它是收起。
+       原来它只负责打开、抽屉一开就被藏起来 —— 那样关抽屉只剩右上角的 ×，
+       而且顶栏会因为它消失/出现而跳一下。 */
+    fab.addEventListener("click", function () {
+      var d = $("coach-drawer");
+      if (d && !d.hidden) closePanel();
+      else openPanel();
+    });
     var c = $("coach-close");
     if (c) c.addEventListener("click", closePanel);
     var m = $("coach-mask");

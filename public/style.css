@@ -23,6 +23,9 @@
   --sb-thumb: rgba(231, 237, 247, .22);
   --sb-thumb-hot: rgba(231, 237, 247, .38);
   --sb-size: 10px;
+  /* 教练抽屉的宽度。可拖（左边缘那条把手），记在 localStorage。
+     抽屉是「挤压式」的：打开时页面给右边让出这么多，内容重排、不被盖住。 */
+  --coach-w: 560px;
 }
 
 [data-theme="light"] {
@@ -812,16 +815,41 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
 }
 .coach-fab-mark { letter-spacing: .06em; }
 
-/* 遮罩同样不拦点击：开着教练时还想点开某张图讲一讲，不该被吃掉一次点击 */
-.coach-mask { position: fixed; inset: 0; background: rgba(15, 20, 30, .38); z-index: 70; pointer-events: none; }
+/* 抽屉打开时：页面整体让出右边这一条，内容重排 —— 不是盖在上面。
+   原来（纯 fixed 覆盖）右边一列图表会被压在抽屉底下，想对着图问就得来回开关。
+   注意 padding 加在 html 上：fixed 元素（抽屉、悬浮球）相对视口，不受它影响，
+   而 sticky 的 topbar 和正文都跟着变窄。 */
+html.coach-open { padding-right: var(--coach-w); }
+html { transition: padding-right .18s ease; }
+/* 拖动时不能有过渡，否则宽度追着鼠标慢半拍 */
+html.is-coach-resizing { transition: none; }
+html.is-coach-resizing, html.is-coach-resizing * { user-select: none; cursor: col-resize !important; }
+/* 抽屉开着时悬浮球已经没用了（抽屉就是它的展开态），别让它压在抽屉下面 */
+html.coach-open .coach-fab { display: none; }
+/* 宽屏下页面被挤窄而不是被遮住，所以不需要那层压暗 */
+.coach-mask { display: none; }
 
 .coach-drawer {
-  position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 96vw);
+  position: fixed; top: 0; right: 0; bottom: 0; width: var(--coach-w);
   z-index: 71; display: flex; flex-direction: column;
   background: var(--panel); border-left: 1px solid var(--border);
   box-shadow: -18px 0 48px rgba(0, 0, 0, .16);
+  transition: width .18s ease;
 }
 .coach-drawer[hidden], .coach-mask[hidden] { display: none; }
+html.is-coach-resizing .coach-drawer { transition: none; }
+
+/* 拖拽把手：贴着抽屉左边缘，比视觉上的那道竖线宽一些，好抓 */
+.coach-grip {
+  position: absolute; left: -4px; top: 0; bottom: 0; width: 9px;
+  z-index: 3; cursor: col-resize; touch-action: none;
+}
+.coach-grip::after {
+  content: ""; position: absolute; left: 4px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 40px; border-radius: 2px;
+  background: var(--border); transition: background .12s ease;
+}
+.coach-grip:hover::after, .coach-grip.is-live::after { background: var(--accent); }
 
 .coach-head {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
@@ -1076,8 +1104,15 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
 .coach-think-b::-webkit-scrollbar,
 .coach-step-b::-webkit-scrollbar { width: 8px; }
 
+/* 窄屏没得让位（让了页面就剩一条缝），所以退回覆盖式，并恢复那层压暗与遮罩 */
 @media (max-width: 620px) {
   .coach-fab { right: 14px; bottom: 14px; padding: 10px 14px; }
   .coach-drawer { width: 100vw; }
+  html.coach-open { padding-right: 0; }
+  .coach-grip { display: none; }
+  .coach-mask:not([hidden]) {
+    display: block; position: fixed; inset: 0;
+    background: rgba(15, 20, 30, .38); z-index: 70; pointer-events: none;
+  }
   .coach-body, .coach-quick, .coach-form, .coach-head, .coach-ctx { padding-left: 14px; padding-right: 14px; }
 }

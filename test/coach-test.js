@@ -588,6 +588,56 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
     tb2 ? tb2.textContent.slice(0, 50) : '无');
   check('正文照常上屏', /策略梯度/.test(lastMsg.querySelector('.coach-out').textContent));
 
+  /* 抽屉是「挤压式」的：打开时页面给右边让位、内容重排，而不是盖在上面把
+     右边那列图表压住。宽度可拖（左边缘把手），两边用同一个 --coach-w。 */
+  console.log('\n=== 前端：抽屉挤压页面 + 宽度可拖 ===');
+  const root = doc.documentElement;
+  check('关着的时候页面占满整屏', root.classList.contains('coach-open') === false);
+  click($('coach-fab'));
+  await sleep(60);
+  check('打开后页面进入让位状态（内容重排，不是被盖住）',
+    root.classList.contains('coach-open') === true);
+  check('宽度写进 html 的 --coach-w（抽屉和页面边距共用同一个值）',
+    /px$/.test(String(root.style.getPropertyValue('--coach-w') || '')),
+    '值=' + root.style.getPropertyValue('--coach-w'));
+  check('默认宽度 560', M.width() === 560, String(M.width()));
+
+  const grip = $('coach-grip');
+  check('左边缘有拖拽把手', !!grip);
+  const mousedown = function (el, x) {
+    el.dispatchEvent(new window.MouseEvent('mousedown', {
+      bubbles: true, cancelable: true, clientX: x, button: 0,
+    }));
+  };
+  const mousemove = function (x) {
+    window.dispatchEvent(new window.MouseEvent('mousemove', { bubbles: true, clientX: x }));
+  };
+  const mouseup = function () {
+    window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }));
+  };
+  const vw = window.innerWidth || 1024;
+  mousedown(grip, vw - 560);
+  mousemove(vw - 720);                       // 往左拖 → 抽屉变宽
+  check('拖动时宽度跟着走', M.width() === 720, String(M.width()));
+  check('拖动途中给 html 加了 is-coach-resizing（关掉过渡，宽度不追着鼠标慢半拍）',
+    root.classList.contains('is-coach-resizing') === true);
+  mousemove(-99999);                         // 一路拖到最左 → 抽屉最宽 → 夹到上限
+  check('再宽也不超过视口的 82%（页面总得剩一条）',
+    M.width() === Math.round(vw * 0.82), M.width() + ' / 视口 ' + vw);
+  mousemove(vw + 99999);                     // 反向拖到最右 → 抽屉最窄 → 夹到下限
+  check('再窄也不低于下限（表格要看得分明）', M.width() === 380, String(M.width()));
+  mouseup();
+  check('松手后收起拖动态', root.classList.contains('is-coach-resizing') === false);
+  const kept = M.width();
+  check('宽度记进 localStorage，下次打开还是这么宽',
+    Number(window.localStorage.getItem('mtl-coach-w')) === kept,
+    String(window.localStorage.getItem('mtl-coach-w')));
+
+  click($('coach-close'));
+  await sleep(60);
+  check('关掉后页面拿回整屏（不是留一条空白）',
+    root.classList.contains('coach-open') === false && $('coach-drawer').hidden === true);
+
   console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
   try { dom.window.close(); } catch (e) {}
   process.exit(fail ? 1 : 0);

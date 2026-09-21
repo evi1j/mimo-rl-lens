@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MiMo-V2.6 · RL 实时训练看板</title>
 <meta name="description" content="mimo-v2.6-pro / flash 强化学习训练实时指标面板，数据直连小米官方 trainer 日志。">
-<link rel="stylesheet" href="style.css?v=32">
+<link rel="stylesheet" href="style.css?v=33">
 </head>
 <body>
 
@@ -275,6 +275,10 @@
 
 <div class="coach-mask" id="coach-mask" hidden></div>
 <aside class="coach-drawer" id="coach-drawer" hidden aria-label="AI 训练教练">
+  <!-- 左边缘的拖拽把手：拉开抽屉宽度。页面会跟着让位，而不是被盖住 -->
+  <div class="coach-grip" id="coach-grip" title="拖动调整宽度（页面会跟着让位）"
+       role="separator" aria-orientation="vertical" aria-label="调整抽屉宽度"></div>
+
   <div class="coach-head">
     <div>
       <div class="coach-kicker">AI 训练教练</div>
@@ -309,9 +313,9 @@
   </form>
 </aside>
 
-<script src="glossary.js?v=32"></script>
-<script src="narrator.js?v=32"></script>
-<script src="app.js?v=32"></script>
-<script src="coach.js?v=32"></script>
+<script src="glossary.js?v=33"></script>
+<script src="narrator.js?v=33"></script>
+<script src="app.js?v=33"></script>
+<script src="coach.js?v=33"></script>
 </body>
 </html>

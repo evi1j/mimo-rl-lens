@@ -32,6 +32,9 @@
   var HISTORY_MAX = 8;           // 回传几轮历史，和后端 COACH_HISTORY_MAX 对齐
   var CTX_KEY = "mtl-coach-ctx"; // 「参考当前页面」开关的记忆
   var SID_KEY = "mtl-coach-sid"; // 上次在聊哪一段对话（刷新后接着那一段）
+  var W_KEY = "mtl-coach-w";     // 抽屉宽度（手动拖过就记住）
+  var W_MIN = 380;               // 再窄就看不清表格了
+  var W_MAX_RATIO = 0.82;        // 最多占视口这么多，页面总得剩下一条
   var GREET_TEXT = "我是 AI 训练教练。这块板爬下来的数据我都能查 —— 两个 run 的逐指标历史、" +
     "离线评测分数、训练进度与花费，还有看板记下来的事件解说；训练上的概念也可以直接问。" +
     "问我之前，我会自己决定该去查哪些数据。";
@@ -54,6 +57,7 @@
   var ctl = null;   // AbortController，用于「停止」
   var useCtx = localStorage.getItem(CTX_KEY) !== "0";
   var avail = null; // null=还没探测；true/false=AI 可用与否
+  var curW = 560;   // 抽屉当前宽度（px）
   var armed = false;      // 「清空」按钮是否已进入待确认状态
   var armedTimer = null;  // 待确认的自动复原计时器
 
@@ -792,6 +796,59 @@
     if (box) box.hidden = true;
   }
 
+  /* ---------------- 宽度：可拖，页面跟着让位 ----------------
+     宽度写进 html 的 --coach-w：抽屉自己用它，页面的 padding-right 也用它，
+     所以拖一次两边同时变 —— 内容是「被挤窄」而不是「被盖住」。 */
+  function wMax() {
+    var vw = (window.innerWidth || 1024);
+    return Math.max(W_MIN, Math.round(vw * W_MAX_RATIO));
+  }
+
+  function setWidth(px, save) {
+    var w = Math.round(Number(px) || 0);
+    if (!w) return curW;
+    w = Math.min(Math.max(w, W_MIN), wMax());
+    curW = w;
+    var root = document.documentElement;
+    if (root && root.style && typeof root.style.setProperty === "function") {
+      root.style.setProperty("--coach-w", w + "px");
+    }
+    if (save !== false) { try { localStorage.setItem(W_KEY, String(w)); } catch (e) {} }
+    return w;
+  }
+
+  /* 拖左边缘。全程只在 mousemove 里改一个 CSS 变量，不做布局计算 ——
+     页面靠 padding-right 自己重排；图表是 SVG（viewBox），宽度变了自动缩放。 */
+  function bindResize() {
+    var grip = $("coach-grip");
+    if (!grip || grip._resBound) return;
+    grip._resBound = true;
+    grip.addEventListener("mousedown", function (e) {
+      if (e.button != null && e.button !== 0) return;
+      e.preventDefault();
+      var root = document.documentElement;
+      root.classList.add("is-coach-resizing");
+      grip.classList.add("is-live");
+      function move(ev) {
+        setWidth((window.innerWidth || 1024) - (ev.clientX || 0), false);
+      }
+      function up() {
+        root.classList.remove("is-coach-resizing");
+        grip.classList.remove("is-live");
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        setWidth(curW, true);      // 松手才落盘：拖动途中每动一下都写一次没必要
+      }
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    });
+    // 双击把手回到默认宽度
+    grip.addEventListener("dblclick", function () { setWidth(560, true); });
+    /* 视口变了要重新夹一次上限：把窗口拖窄（或分屏）时，
+       原来那个宽度可能已经超过屏幕，页面会被挤得只剩一条缝。 */
+    window.addEventListener("resize", function () { setWidth(curW, false); });
+  }
+
   /* ---------------- 开关抽屉 ---------------- */
   function openPanel() {
     var d = $("coach-drawer"), m = $("coach-mask");
@@ -802,6 +859,9 @@
 
     d.hidden = false;
     if (m) m.hidden = false;
+    /* 关键的一行：给页面加右边距，让内容重排。少了它就是「盖在上面」——
+       右边那列图表会被压在抽屉底下，想对着图问就得来回开关。 */
+    document.documentElement.classList.add("coach-open");
     stick = true;                 // 打开抽屉先看最新的那一句
     bindStick();
     refreshCtx();
@@ -820,6 +880,7 @@
     var d = $("coach-drawer"), m = $("coach-mask");
     if (d) d.hidden = true;
     if (m) m.hidden = true;
+    document.documentElement.classList.remove("coach-open");   // 页面拿回整屏
   }
 
   /* 探测模型可用性：不可用就把输入区禁掉、在顶部说清楚，
@@ -875,6 +936,13 @@
     if (c) c.addEventListener("click", closePanel);
     var m = $("coach-mask");
     if (m) m.addEventListener("click", closePanel);
+
+    /* 宽度：上次拖过就用上次的；视口变小了（换显示器/分屏）要重新夹一次上限，
+       否则会出现抽屉比屏幕还宽、页面被挤没的情况。 */
+    var savedW = 0;
+    try { savedW = Number(localStorage.getItem(W_KEY)) || 0; } catch (e) {}
+    setWidth(savedW || 560, false);
+    bindResize();
 
     var sw = $("coach-ctx-sw");
     if (sw) {
@@ -948,5 +1016,7 @@
     sessions: function () { return refreshSessions(); },
     use: function (id) { return useSession(id, true); },
     newSession: newSession,
+    width: function () { return curW; },
+    setWidth: function (px) { return setWidth(px, true); },
   };
 })();

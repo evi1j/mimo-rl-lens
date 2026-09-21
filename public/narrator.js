@@ -51,10 +51,13 @@
     var host = document.getElementById("nar-now");
     if (!host) return;
     if (!items || !items.length) { host.innerHTML = '<div class="empty">等待服务端数据…</div>'; return; }
-    var html = "<h3>此刻正在发生</h3>";
+    // 两个 run 都结束后就没有「此刻正在发生」了，标题换成「最终状态」
+    var allEnded = items.every(function (r) { return r.ended; });
+    var html = "<h3>" + (allEnded ? "最终状态" : "此刻正在发生") + "</h3>";
     items.forEach(function (r) {
-      var txt = "<b>" + esc(r.label) + "</b> 跑到第 " + (r.step != null ? r.step : "--") + " 步，" + esc(r.phase);
-      if (r.progress != null) txt += "，本步完成 " + (r.progress * 100).toFixed(1) + "%";
+      var txt = "<b>" + esc(r.label) + "</b> " + (r.ended ? "停在第 " : "跑到第 ") +
+        (r.step != null ? r.step : "--") + " 步，" + esc(r.phase);
+      if (!r.ended && r.progress != null) txt += "，本步完成 " + (r.progress * 100).toFixed(1) + "%";
       txt += "。";
       if (r.value != null) txt += " 当前成绩 <b>" + r.value.toFixed(4) + "</b>。";
       if (r.judgedPct != null) txt += " 本步答案已判完 " + r.judgedPct + "%。";

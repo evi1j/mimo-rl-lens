@@ -42,7 +42,12 @@ const HOST = SERVER_CFG.host;
 const UPSTREAM = 'https://mimo.xiaomi.com/rl/';
 const PUBLIC_DIR = at('public');
 const TTL = 5000; // ms — be polite to upstream, the board polls every 10s
-const NARRATOR_MS = 20000; // 解说引擎后台轮询间隔
+const NARRATOR_MS = 20000;  // 解说引擎后台轮询间隔
+/* 上游两个 run 都标成 ended 之后，数据不会再变，没必要还 20 秒打扰一次。
+   放宽到 5 分钟：万一官方又开新的一轮，最多 5 分钟内也能发现。 */
+const NARRATOR_IDLE_MS = 300000;
+let allEnded = false;       // 上一次轮询看到的是不是「两个 run 都结束了」
+let pollTimer = null;
 
 const cache = new Map();
 const inflight = new Map();
@@ -294,6 +299,10 @@ async function narratorPoll() {
       const n = await fetchUpstream('api/notices');
       state.notices = n.notices || [];
     } catch (e) { /* 拿不到公告也不影响其他事件 */ }
+    allEnded = keys.length > 0 && keys.every(function (k) {
+      const st = state.status[k];
+      return !!(st && st.run && (st.run.mode === 'ended' || st.run.end != null));
+    });
     engine.update(state);
     lastBrief = buildBrief(state);
     if (engine.isDirty()) saveLog();
@@ -303,6 +312,16 @@ async function narratorPoll() {
   } catch (e) {
     // 上游偶发失败时静默跳过，下一轮重试
   }
+}
+
+/* 轮询节奏自适应：训练还在跑就 20s 一次，两边都结束了放宽到 5 分钟。
+   用递归 setTimeout 而不是 setInterval —— 后者的间隔在注册那一刻就定死了，改不了。 */
+function schedulePoll(delay) {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = setTimeout(async function () {
+    await narratorPoll();
+    schedulePoll(allEnded ? NARRATOR_IDLE_MS : NARRATOR_MS);
+  }, delay);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -710,8 +729,7 @@ server.listen(PORT, HOST, () => {
   console.log(`mimo-train-live  ->  http://${HOST}:${PORT}`);
   console.log(`proxying upstream: ${UPSTREAM}  (cache ${TTL}ms)`);
   loadLog();
-  narratorPoll();
-  setInterval(narratorPoll, NARRATOR_MS);
+  schedulePoll(0);
   const s = store.stats();
   if (s.enabled) {
     console.log(`sqlite: data/board.db（驱动 ${s.driver}）· 指标 ${s.metrics} 条 · 解说 ${s.narrator} 条 · ${(s.sizeBytes / 1024).toFixed(0)} KB`);
@@ -723,7 +741,7 @@ server.listen(PORT, HOST, () => {
     console.warn('sqlite: 存档不可用 —— 历史指标 / 解说搜索 / CSV 导出 这次都用不了');
     console.warn(String(s.reason || '未知原因').split('\n').join('\n        '));
   }
-  console.log(`narrator engine: 每 ${NARRATOR_MS / 1000}s 记录一次`);
+  console.log(`narrator engine: 每 ${NARRATOR_MS / 1000}s 记录一次（上游结束后放宽到 ${NARRATOR_IDLE_MS / 1000}s）`);
 
   const lcfg = llm.loadConfig();
   if (!lcfg.enabled) {

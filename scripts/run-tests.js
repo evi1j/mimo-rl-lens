@@ -29,6 +29,7 @@ const TIMEOUT_MS = 5 * 60 * 1000; // 单个用例最多跑 5 分钟，卡住别�
 
 /* 顺序即执行顺序。server-config-test 必须在最后（它会停掉 8787）。 */
 const CASES = [
+  { file: 'narrator-core-test.js', desc: '解说引擎规则：停滞提醒 / 上游 ended 后收尾（纯本地）' },
   { file: 'sqlite-driver-test.js', desc: 'SQLite 驱动：内置/wasm 双路、跨驱动读库、WAL 自救' },
   { file: 'store-test.js', desc: '指标仓库：series / tag_meta / bench / run_state（需 8787）' },
   { file: 'ai-retry-test.js', desc: 'AI 分层重试：请求级 / 正文级 / 断连' },

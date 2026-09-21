@@ -55,7 +55,7 @@ Node 版本要求写在 `package.json` 的 `engines` 里（`>=22.5`，低于它�
 
 ```
 浏览器 ──► src/server.js ──► 上游 https://mimo.xiaomi.com/rl/
-              │              （5 秒缓存，礼貌轮询）
+              │              （5 秒缓存；解说轮询 20s，两个 run 都 ended 后放宽到 5 分钟）
               ├─► 静态页面 public/
               ├─► src/store.js ──► data/board.db (SQLite)
               └─► src/llm.js ──► 你的 OpenAI 兼容接口（可选，默认关闭）
@@ -66,6 +66,14 @@ Node 版本要求写在 `package.json` 的 `engines` 里（`>=22.5`，低于它�
 （`series(run,tag,step,v,wall)`、`tag_meta`、`bench`、`bench_meta`、`run_state`，
 外加早期就有的 `metrics`/`narrator`/`meta`），
 指标从 2000 涨到 5000、评测从 3 个涨到 10 个都只加行、不改表。
+
+**解说引擎**（`public/narrator-core.js`，规则在浏览器和 Node 里同一份）：
+一步跑了多久按上游自己的时间算（`clock.now − step.last_wall`），不用本地「我盯了多久」——
+后者服务一重启就归零，会把真实耗时低估。上游把 run 标成 `ended` 之后，引擎会发一条
+收尾解说（停在第几步、成绩、一共跑了多久），并且**不再**发「第 N 步还没结束」：
+那句本来是提示卡住，训练跑完了再说一遍就成了假话。收尾那条的解释里会接上前面那条
+「还没结束」（「是它还在跑的时候说的，不是卡死」），改历史文案不如纠正它。
+轮询间隔也跟着降下来：跑着的时候 20 秒一次，两边都结束了 5 分钟一次。
 
 **AI 讲解**：模型拿到 4 个 function calling 工具自己决定查什么 ——
 `list_metrics`（检索指标）、`query_series`（查历史序列）、`run_status`（训练状态）、
@@ -297,6 +305,10 @@ cp config.example.json config.json
 「清空」从标题行挪进会话那一层，不再紧挨着「×」）。
 → `v1.7.4`（教练入口从右下角悬浮球搬到顶栏，文案写全名「AI 模型训练教练」；
 它同时是开关 —— 抽屉开着时再按一下收起，不再一开抽屉就把自己藏起来）。
+→ `v1.7.5`（上游结束后解说会收尾：不再喊「第 N 步还没结束」，改发「停在第 N 步、成绩、
+一共跑了多久」，并在解释里接上前面那条；「此刻」显示「已结束」；两个 run 都结束后
+轮询从 20s 放宽到 5 分钟。另外修了页脚链接写 mimo.xiaomi.com 却跳 X 的问题：
+链接显示的文字一律由 href 推导）。
 
 回退到某个版本：`git checkout v1.4.0`。注意 `git push` 默认不带 tag，推里程碑要 `git push --tags`。
 

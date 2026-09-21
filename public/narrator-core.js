@@ -79,6 +79,8 @@
 
     infra: "大规模训练跑在成千上万张 GPU 上，按概率每天都必然会有硬件或网络故障：单卡 OOM、节点掉线、判分服务超时、某个数据集损坏。所以工程上不追求不崩，而是假定一定会崩，用三件事兜底：周期性 checkpoint 存档、崩溃后自动拉起并从存档恢复、对数据做校验发现污染就回滚。看板上会有重启次数这个指标，正是系统可靠性的直接体现。",
 
+    finish: "一次 RL 训练不会一直跑下去：步数、预算或收敛判据到了就停，上游这时会把这次 run 标成 ended，不再上报新的 step。结束之后训练曲线就定格了，最后一步的分数只是那一批题上的采样结果，不代表模型的最终水平——真正对外的是离线评测（固定题库、单独起推理服务跑出来的分数）。所以判断一次训练成不成功，看的是评测集曲线和训练过程的稳定性（重启次数、熵有没有坍缩、零分率与满分率的比例），而不是曲线最后那一个点。",
+
     intro: "这个看板盯的是一次真实的强化学习（RL）训练。pro 与 flash 是两路独立训练，用同一套算法、不同配置同时跑，用来互相印证结论。RL 和监督微调最大的区别在于训练数据不是人写的，而是模型自己生成的：先让模型做题、对每题采样多个答案（rollout），判分后用得分折算成 advantage 更新参数（training），如此循环。所以页面上的每个指标，本质上都在回答「这一轮做题、判分、改参数，效果究竟如何」。",
   };
 
@@ -89,6 +91,7 @@
     var prev = {};          // run key -> 上次快照
     var lastStepTs = {};    // run key -> 上次完成 step 的时间
     var stallNotified = {}; // run key -> 已提示过停滞的 step
+    var endedNotified = {}; // run key -> 已经说过「这次训练结束了」（只说一次）
     var seenNotices = {};   // 公告时间戳 -> 1
     var noticesPrimed = false;
     var started = false;
@@ -281,8 +284,36 @@
         if (p) diff(key, p, s);
         if (s.step != null && (!p || p.step !== s.step)) lastStepTs[key] = Date.now() / 1000;
 
-        if (s.step != null && lastStepTs[key] && stallNotified[key] !== s.step) {
-          var gap = Date.now() / 1000 - lastStepTs[key];
+        /* 上游把这次 run 标成 ended 了：它不再上报新的 step。
+           这时候「第 N 步还没结束」是假话 —— 不是卡住，是跑完了。
+           所以必须先判 ended 再看停滞，否则最后一条解说会永远停在「仍未结束」。 */
+        var ended = !!(st.run && (st.run.mode === "ended" || st.run.end != null));
+        if (ended) {
+          if (!endedNotified[key]) {
+            endedNotified[key] = 1;
+            var ri = st.run || {};
+            var span = (ri.start && ri.end)
+              ? "，一共跑了 " + ((ri.end - ri.start) / 3600).toFixed(1) + " 小时" : "";
+            curCtx = {
+              run: key, ended: true, step: s.step, value: s.value, cost: s.cost,
+              restarts: s.restarts, start: ri.start || null, end: ri.end || null,
+            };
+            /* 如果之前为同一步发过「还没结束」，就在解释里接上：
+               那条是它还在跑的时候说的，不是卡死。改历史文案不如纠正它。 */
+            var whyEnd = "上游把这次 run 标记为 ended，不再有新的 step 上报，之后所有数字都不会再变。" +
+              (stallNotified[key] === s.step
+                ? " 上面「第 " + s.step + " 步还没结束」那条是它还在跑的时候说的，不是卡死。" : "");
+            push("good", key,
+              name(key) + " 的训练已经结束：停在第 " + s.step + " 步，成绩 " + f4(s.value) + span + "。",
+              whyEnd, false, LESSONS.finish);
+            curCtx = null;
+          }
+        } else if (s.step != null && lastStepTs[key] && stallNotified[key] !== s.step) {
+          /* 这一步跑了多久，用上游自己的时间算（clock.now − 这一步的墙钟起点），
+             不用本地「我盯了多久」—— 后者服务一重启就归零，会低估。 */
+          var wall = (st.step && st.step.last_wall) || lastStepTs[key];
+          var clkN = (st.clock && st.clock.now) || Date.now() / 1000;
+          var gap = clkN - wall;
           if (gap > 3.5 * 3600) {
             stallNotified[key] = s.step;
             push("info", key, name(key) + " 在第 " + s.step + " 步已经跑了 " + (gap / 3600).toFixed(1) + " 小时还没结束。",
@@ -298,7 +329,9 @@
           label: r.label || key,
           color: color(key),
           step: sp.last != null ? sp.last : null,
-          phase: sp.phase === "rollout" ? "正在让模型大量做题"
+          ended: ended,
+          phase: ended ? "已结束"
+            : sp.phase === "rollout" ? "正在让模型大量做题"
             : sp.phase === "training" ? "正在用刚收集的答案更新模型" : "运行中",
           progress: sp.progress != null ? sp.progress : null,
           value: hl.last != null ? hl.last : null,
@@ -332,7 +365,8 @@
       serialize: function () {
         return {
           v: 2, feed: feed, prev: prev, lastStepTs: lastStepTs, seq: seq,
-          stallNotified: stallNotified, seenNotices: seenNotices,
+          stallNotified: stallNotified, endedNotified: endedNotified,
+          seenNotices: seenNotices,
           noticesPrimed: noticesPrimed, started: started, now: nowCache,
         };
       },
@@ -349,6 +383,7 @@
         prev = d.prev || {};
         lastStepTs = d.lastStepTs || {};
         stallNotified = d.stallNotified || {};
+        endedNotified = d.endedNotified || {};
         seenNotices = d.seenNotices || {};
         noticesPrimed = !!d.noticesPrimed;
         started = !!d.started;

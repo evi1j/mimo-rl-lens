@@ -182,6 +182,31 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
   check('关于页有正文', aboutTxt.length > 200, '长度 ' + aboutTxt.length);
   check('关于页提到本地运行', /本地/.test(aboutTxt));
 
+  /* ---------- 7. 链接：写的是什么网址，点下去就该去哪 ---------- */
+  console.log('\n=== 链接文案与 href 一致 ===');
+  const hostPath = function (u) {
+    return String(u || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  };
+  const links = Array.from(doc.querySelectorAll('#foot-src a, #about-body a'));
+  check('页脚与关于页都有链接', links.length >= 2, '共 ' + links.length + ' 个');
+  const bad = links.filter(function (a) {
+    const txt = (a.textContent || '').trim();
+    const hp = hostPath(a.getAttribute('href'));
+    return !hp || txt.indexOf(hp) < 0;   // 显示的文字里必须能看出要去哪个域名/路径
+  }).map(function (a) {
+    return (a.textContent || '').trim() + ' -> ' + a.getAttribute('href');
+  });
+  check('每个链接显示的文字都带上了它真正去的域名', bad.length === 0, bad.join(' ; '));
+
+  const srcLink = doc.querySelector('#foot-src a');
+  check('「数据源」指向看板取数的站点本身（不是官方社交账号）',
+    !!srcLink && /mimo\.xiaomi\.com/.test(srcLink.getAttribute('href') || ''),
+    srcLink ? srcLink.getAttribute('href') : '没有数据源链接');
+  check('「数据源」的文字和 href 是同一个站',
+    !!srcLink && (srcLink.textContent || '').indexOf(hostPath(srcLink.getAttribute('href'))) >= 0,
+    srcLink ? srcLink.textContent + ' | ' + srcLink.getAttribute('href') : '');
+  console.log('    页脚:', ((doc.getElementById('foot-src') || {}).textContent || '').replace(/\s+/g, ' ').trim());
+
   console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
   process.exit(fail ? 1 : 0);
 })().catch(function (e) {

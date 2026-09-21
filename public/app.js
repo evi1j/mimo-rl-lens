@@ -156,6 +156,13 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
     });
   }
+  /* 链接上显示的文字由网址自己推导出来（去掉协议和末尾斜杠）。
+     之前页脚写死显示「mimo.xiaomi.com/rl」、href 却取上游的 social.url（那是 X 账号），
+     点上去跳到 x.com —— 看到的地方和去的地方不是一个。文案跟着 href 走就不会再错。 */
+  function hostPath(u) {
+    return String(u || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  }
+  var SRC_URL = "https://mimo.xiaomi.com/rl/";   // 数据源：看板所有数字都从这里来
 
   /* ---------------- fetch ---------------- */
   function getJSON(url) {
@@ -1665,9 +1672,16 @@
       var d = new Date(m.stream_start * 1000);
       $("foot-stream").textContent = "stream since " + d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
     }
+    /* 「数据源」和「官方账号」是两件事，别再共用一个 href：
+       数据源就是看板取数的站点，官方账号是上游 social 里给的那个（X）。 */
+    var srcHtml = '数据源：<a class="link" href="' + esc(SRC_URL) + '" target="_blank" rel="noopener">' +
+      esc(hostPath(SRC_URL)) + "</a> · 官方 trainer 日志";
     if (m.social && m.social.url) {
-      $("foot-src").innerHTML = '数据源：<a href="' + esc(m.social.url) + '" target="_blank" rel="noopener">mimo.xiaomi.com/rl</a> · 官方 trainer 日志';
+      srcHtml += ' · 官方账号 <a class="link" href="' + esc(m.social.url) +
+        '" target="_blank" rel="noopener">' + esc((m.social.handle || hostPath(m.social.url)) +
+        " · " + hostPath(m.social.url)) + "</a>";
     }
+    $("foot-src").innerHTML = srcHtml;
     if (window.MTLNarrator) {
       try { window.MTLNarrator.update(state); } catch (e) {}
     }
@@ -1746,7 +1760,8 @@
     var upstream = (m.about || []).map(function (t) { return "<p>" + esc(t) + "</p>"; }).join("");
     host.innerHTML =
       "<p>这是一个<strong>本地运行</strong>的看板，数据直接代理小米官方公开接口 " +
-      '<a class="link" href="https://mimo.xiaomi.com/rl/" target="_blank" rel="noopener">mimo.xiaomi.com/rl</a>，' +
+      '<a class="link" href="' + esc(SRC_URL) + '" target="_blank" rel="noopener">' +
+      esc(hostPath(SRC_URL)) + "</a>，" +
       "不经过任何第三方服务器，也不存储除了本地 SQLite 之外的东西。</p>" +
       "<p>右侧的「实时解说」是本地生成的教学文本：规则引擎先给出结构化解说，" +
       "如果你配置了本地大模型（OpenAI 兼容接口），它会进一步改写成更有信息量的版本。两者在界面上有明确标记。</p>" +
@@ -1757,8 +1772,10 @@
       "<li><b>指标库</b>页可以浏览 trainer 上报的全部指标，共 " + int(state.tags.length) + " 项。</li>" +
       "</ul>" +
       (upstream ? "<h3>官方说明</h3>" + upstream : "") +
+      /* 账号链接把平台域名也写出来（@XiaomiMiMo · x.com/XiaomiMiMo）：
+         handle 带 @ 看不出是哪个平台的号，只写它就等于让人猜点下去会去哪。 */
       "<p class='dim'>官方账号 " + '<a class="link" href="' + esc(src) + '" target="_blank" rel="noopener">' +
-      esc(handle) + "</a> · " + esc(m.footer_note || "") + "</p>";
+      esc(handle) + " · " + esc(hostPath(src)) + "</a> · " + esc(m.footer_note || "") + "</p>";
   }
 
   /* ---------------- 通用指标序列拉取（带缓存） ---------------- */

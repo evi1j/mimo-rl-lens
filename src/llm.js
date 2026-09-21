@@ -534,7 +534,38 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'search_notes',
+      description: '检索看板记录过的训练事件解说（每条含「发生了什么 / 机制解释 / 知识点」三段）。用来回答回顾性问题：训练过程中出过什么问题、什么时候重启过、哪一步掉分、沙箱崩过几次。不传 q 返回最近若干条。',
+      parameters: {
+        type: 'object',
+        properties: {
+          q: { type: 'string', description: '关键词，如 重启、掉分、沙箱、熵、超时。会同时匹配事件描述、机制解释与知识点三段。' },
+          limit: { type: 'integer', description: '最多返回多少条，默认 20' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'db_overview',
+      description: '查看本地数据库到底覆盖了哪些数据：多少指标、多少条序列、覆盖到第几步、有哪些训练任务、哪些评测、记录了多少条解说事件。不确定某项数据是否存在时（例如要查一个没听过的指标名），先查它。',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
 ];
+
+/* 讲解只开放其中 4 个：讲一张图不需要翻解说历史或库概览，
+   多喂工具会让模型跑去查无关的东西，讲解行为也会跟着变。
+   教练用全量 TOOLS。这两条路互不干扰。 */
+const EXPLAIN_TOOL_NAMES = ['list_metrics', 'query_series', 'run_status', 'query_bench'];
+const EXPLAIN_TOOLS = TOOLS.filter(function (t) {
+  return EXPLAIN_TOOL_NAMES.indexOf(t.function.name) >= 0;
+});
 
 const MAX_TOOL_ROUNDS = 3;     // 工具轮上限，防止模型绕圈子
 const SERIES_MAX_POINTS = 80;  // 序列最多回传多少点，超过就等距抽样
@@ -563,6 +594,11 @@ function summarizeToolResult(name, res) {
     }).join('，');
   }
   if (name === 'query_bench') return (res.rows || []).length + ' 条评测分数';
+  if (name === 'search_notes') return '检索到 ' + res.count + ' 条解说记录';
+  if (name === 'db_overview') {
+    return '指标 ' + res.metrics + ' 个 / 序列 ' + res.seriesRows + ' 行 / 最新第 ' +
+      res.seriesMaxStep + ' 步 / 解说 ' + res.narratorNotes + ' 条';
+  }
   return '已返回';
 }
 
@@ -621,7 +657,39 @@ function runTool(name, args) {
     return { bench: args.bench || 'all', count: rows.length, rows: rows };
   }
 
-  return { error: '没有名为 ' + name + ' 的工具。可用：list_metrics、query_series、run_status、query_bench' };
+  /* 历史解说记录。lesson 是教学段落，往往很长，截断后再给模型——
+     它要的是「出过什么事」，不是把旧解说重抄一遍。 */
+  if (name === 'search_notes') {
+    const rows = store.searchNarrator(String(args.q || ''), Math.min(Math.max(Number(args.limit) || 20, 1), 100));
+    if (!rows.length) {
+      return { error: '没有匹配的解说记录（q="' + String(args.q || '') + '"）。换关键词再试，或不传 q 拿最近的事件。' };
+    }
+    return {
+      count: rows.length,
+      notes: rows.map(function (r) {
+        return {
+          ts: r.ts, level: r.level, run: r.run || '',
+          what: String(r.text || '').slice(0, 160),
+          why: String(r.why || '').slice(0, 200),
+          lesson: String(r.lesson || '').slice(0, 240),
+        };
+      }),
+    };
+  }
+
+  if (name === 'db_overview') {
+    const s = store.stats();
+    if (!s || !s.enabled) return { error: '本地数据库没就绪：' + String((s && s.reason) || '未知原因') };
+    return {
+      metrics: s.metrics, seriesRows: s.series, seriesTags: s.seriesTags,
+      seriesMaxStep: s.seriesMaxStep, benchRows: s.bench, runStates: s.runState,
+      narratorNotes: s.narrator, perRun: s.perRun,
+      note: '指标指指标库里有的监控量；序列行指每一步的采样值；解说记录指看板自动记下并讲过的事件。',
+    };
+  }
+
+  return { error: '没有名为 ' + name + ' 的工具。可用：' +
+    TOOLS.map(function (t) { return t.function.name; }).join('、') };
 }
 
 /* 兜底：个别情况下模型会在正文里写 <tool_call>…</tool_call> 标签（它想再查数据
@@ -633,7 +701,8 @@ const TOOL_CALL_CLOSE = '</tool_call>';
 function filterToolCallText(onDelta) {
   let drop = false;
   let hold = '';
-  return function (chunk) {
+  let emitted = 0;
+  const fn = function (chunk) {
     let s = hold + String(chunk == null ? '' : chunk);
     hold = '';
     let out = '';
@@ -660,17 +729,25 @@ function filterToolCallText(onDelta) {
       }
     }
     if (!out) return true;
+    emitted += out.length;
     return onDelta(out) !== false;
   };
+  /* 真正上屏的字数 —— 被剥掉的 <tool_call> 段不算。
+     判定「讲成了没有」必须看这个，而不是模型吐出的原始 content 长度：
+     模型有时会在正文里写一大段工具标签（工具轮结束后还想接着查），
+     原样统计会得出「写了 500 字」的结论，而页面上其实只剩几个换行。
+     这是真实踩过的坑：done 报成功、attempts=1，用户看到一个空白框。 */
+  fn.emitted = function () { return emitted; };
+  return fn;
 }
 
 /* 非流式调用，只为了拿到 tool_calls。工具轮必须非流式——要先收完调用参数才能执行。 */
-async function toolChat(cfg, messages, toolChoice) {
+async function toolChat(cfg, messages, toolChoice, tools) {
   const model = await resolveModel(cfg);
   const body = {
     model: model,
     messages: messages,
-    tools: TOOLS,
+    tools: tools || EXPLAIN_TOOLS,
     temperature: 0, // 这一轮只要它选对工具和参数，不需要创造性
     max_tokens: Number(cfg.toolMaxTokens) || 800,
     stream: false,
@@ -685,13 +762,13 @@ async function toolChat(cfg, messages, toolChoice) {
    实测：该模型流式下约 0.5s 就开始吐 reasoning_content，tool_calls 要到 3s 左右
    才发出来。非流式等于让用户对着空白干等整段，还白白丢掉这段思考。
    增量累积：arguments 是分块到达的字符串，必须按 index 拼接后才是完整 JSON。 */
-async function streamToolChat(cfg, messages, toolChoice, onThink) {
+async function streamToolChat(cfg, messages, toolChoice, onThink, tools) {
   const model = await resolveModel(cfg);
   const url = String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions';
   const body = {
     model: model,
     messages: messages,
-    tools: TOOLS,
+    tools: tools || EXPLAIN_TOOLS,
     temperature: 0, // 这一轮只要它选对工具和参数，不需要创造性
     // 流式下思考也占额度，比非流式给足一些，免得思考写完 tool_calls 被截断
     max_tokens: Number(cfg.toolMaxTokens) || 1200,
@@ -752,8 +829,14 @@ async function streamToolChat(cfg, messages, toolChoice, onThink) {
 }
 
 /* 工具轮：让模型先用工具查数据，再写正文。返回实际跑了几轮。
-   任何一步失败都降级为「不查工具直接讲」，绝不把整条讲解链路打断。 */
-async function toolPhase(cfg, messages, onTool, onThink) {
+   任何一步失败都降级为「不查工具直接讲」，绝不把整条讲解链路打断。
+   opts.tools       这一轮开放哪些工具（默认讲解那 4 个）
+   opts.firstChoice 第一轮的 tool_choice。讲解用 required（讲一张图必须先读数），
+                    教练用 auto（问「什么是 GRPO」不该被逼着先查一遍库）。 */
+async function toolPhase(cfg, messages, onTool, onThink, opts) {
+  opts = opts || {};
+  const tools = opts.tools || EXPLAIN_TOOLS;
+  const firstChoice = opts.firstChoice || 'required';
   let rounds = 0;
   for (let i = 0; i < MAX_TOOL_ROUNDS; i++) {
     /* 一轮 = 模型想一次 + 紧接着的若干次调用。把它编号带给前端，
@@ -769,20 +852,22 @@ async function toolPhase(cfg, messages, onTool, onThink) {
       out = await streamToolChat(
         Object.assign({}, cfg, { timeoutMs: 30000 }),
         messages,
-        rounds === 0 ? 'required' : 'auto',
-        onThinkR
+        rounds === 0 ? firstChoice : 'auto',
+        onThinkR,
+        tools
       );
     } catch (e) {
       // 流式工具轮不通（服务不支持 / 参数不认）就退回非流式，别直接放弃查数据
-      console.log('ai explain: 流式工具轮不可用（' + String(e.message || e).slice(0, 60) + '），回退非流式');
+      console.log('ai tools: 流式工具轮不可用（' + String(e.message || e).slice(0, 60) + '），回退非流式');
       try {
         out = await toolChat(
           Object.assign({}, cfg, { timeoutMs: 30000 }),
           messages,
-          rounds === 0 ? 'required' : 'auto'
+          rounds === 0 ? firstChoice : 'auto',
+          tools
         );
       } catch (e2) {
-        console.log('ai explain: 工具调用不可用（' + String(e2.message || e2).slice(0, 60) + '），改为直接讲解');
+        console.log('ai tools: 工具调用不可用（' + String(e2.message || e2).slice(0, 60) + '），改为直接作答');
         return rounds;
       }
     }
@@ -931,19 +1016,22 @@ async function explainMetric(payload, onDelta, onThink, onTool, hooks) {
     }
     const msgs = st.extra ? messages.concat([{ role: 'user', content: st.extra }]) : messages;
     const onDeltaSafe = filterToolCallText(onDelta || function () { return true; });
+    // 一律以「真正上屏的字数」判定够不够，而不是模型吐出的原始长度（见 filterToolCallText）
+    const kept = function () { return onDeltaSafe.emitted(); };
     try {
       const r = await streamChat(curCfg, msgs, onDeltaSafe, onThink,
         { effort: st.effort, maxTokens: st.maxTokens });
       model = r.model || model;
       if (r.aborted) return { model: model, toolRounds: rounds, attempts: n, aborted: true };
-      if (r.chars >= enough) {
+      if (kept() >= enough) {
         setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000, lastError: null, generated: status.generated + 1 });
         return { model: model, toolRounds: rounds, attempts: n };
       }
-      lastErr = new Error('正文过短（' + r.chars + ' 字 < ' + enough + '）');
-      console.log('ai explain: 第 ' + n + ' 次正文只有 ' + r.chars + ' 字，判定不完整');
+      lastErr = new Error('正文过短（' + kept() + ' 字 < ' + enough + '）');
+      console.log('ai explain: 第 ' + n + ' 次正文只有 ' + kept() + ' 字，判定不完整');
     } catch (e) {
-      const got = Number(e.partialChars || 0);
+      // 断连时同样看已上屏的字数：模型吐出的那截可能大半是工具标签，早被剥掉了
+      const got = kept() || Number(e.partialChars || 0);
       // 断连但已经讲出足够内容：当作讲成了。重跑会让观众把已有的字再看一遍，
       // 而且断的多半只是结尾，为此再烧一次生成不值
       if (got >= enough) {
@@ -995,14 +1083,24 @@ function bodyStrategy(attempt, cfg, effort) {
     maxTokens: Math.round(base * 1.5),
     reason: 'short',
     notice: '正文仍不完整，最后一次尝试：直接给结论',
-    extra: '注意：上一次你只输出了思考、正文几乎没写。' +
-      '这一次请直接输出给观众看的讲解正文，250~450 字，不要长篇推导。',
+    /* 措辞要点名「工具调用」：模型在工具轮之后有时会忍不住在正文里再写一段
+       <tool_call>（想接着查数据），那一段会被剥掉，等于正文白写。
+       实测这是「思考很长、观众却看到一个空框」的主要成因之一。 */
+    extra: '注意：上一次你只输出了思考或工具调用，观众能看到的正文几乎没写。' +
+      '这一次请直接输出给观众看的讲解正文，250~450 字，不要长篇推导，' +
+      '也不要再输出任何工具调用、标签或 JSON —— 正文里只写自然段落。',
   };
 }
 
 module.exports = {
   loadConfig, narrate, probe, status, listModels, explainMetric,
   explainSystem,   // 按 data.kind 产出系统提示词，导出是为了能单独验证分流
-  TOOLS, runTool, summarizeToolResult, toolChat,
+  TOOLS, EXPLAIN_TOOLS, runTool, summarizeToolResult, toolChat,
   isRetryable, bodyStrategy,
+
+  /* 下面这些是底层原语，导出给 coach.js（AI 训练教练）复用：
+     教练和讲解走的是同一套「工具轮 → 流式正文轮」机器，只有提示词、
+     工具开放范围和 tool_choice 不同。与其复制一遍，不如让 coach 组合它们。 */
+  setStatus, streamChat, toolPhase, filterToolCallText,
+  sleep, backoffMs, isModelError, resolveModel, request,
 };

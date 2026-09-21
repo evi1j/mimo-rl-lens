@@ -12,6 +12,8 @@
 2. **看得懂** —— 点任意指标就有讲解：这是什么、图怎么看、现在的数在说什么、什么情况要警惕。
 3. **讲得准** —— AI 讲解会自己查本地指标库（真实数值、历史序列、训练状态、离线评测），
    而不是凭固定文案编。数据变了，讲解也跟着变。
+4. **问得到** —— 右下角的 AI 训练教练可以随便问，它自己决定查哪些数据，
+   既能讲 RL 训练原理，也能落到这块板上的真实数字；多轮追问，还知道你现在在看哪张图。
 
 ## 快速开始
 
@@ -83,6 +85,24 @@ Node 版本要求写在 `package.json` 的 `engines` 里（`>=22.5`，低于它�
 定位（它属于哪一类、名字怎么读），逐项解读交给 AI —— 模型必须先用 `list_metrics`
 确认它存在、再用 `query_series` 查它的历史，不许凭名字猜。
 
+**AI 训练教练**（右下角悬浮球）：和「讲解一张图」不同，它是一段对话 ——
+你随口问，它自己决定查什么。复用同一台机器（工具轮 → 流式正文轮 → 分层重试），
+三处关键差异写在 `src/coach.js` 头部：
+
+| | 图表讲解 | AI 教练 |
+|---|---|---|
+| 轮次 | 单轮，关掉就结束 | 多轮，`history` 带着上文（截到 8 条、单条 1200 字） |
+| 工具 | 4 个（讲一张图不需要翻旧账） | 6 个，多 `search_notes`（历史解说）与 `db_overview`（库覆盖范围） |
+| 首轮 tool_choice | `required`（必须先读数） | `auto`（问「什么是 GRPO」不该被逼着查库） |
+| 成稿门槛 | 200 字（讲不完整要重跑） | 60 字（「pro 第 30 步」也是合格回答） |
+
+它还能拿到「你此刻在看什么」（视图 + 打开着的图表 + run），由前端 `app.js` 通过
+`window.MIMO.getContext()` 提供；抽屉顶部那个开关可以关掉，关掉后后端一个字都收不到。
+
+`/api/coach` 与 `/api/explain` 共用同一套 NDJSON 事件协议
+（`think` / `tool` / `delta` / `notice` / `restart` / `done` / `error`），
+所以前端那套流式渲染是两边共用的思路。
+
 **分层重试**：网络/5xx/超时在原地重试；正文为空只重跑正文轮，已查到的数据不重查；
 流中途断连且已吐出足够内容就收下并标注不完整，不为结尾几个字重烧一次生成。
 
@@ -95,8 +115,10 @@ src/             服务端源码
   sqlite.js        SQLite 驱动适配（内置 node:sqlite / wasm 兜底，抹平 API 差异）
   store.js         SQLite 存档层（建表、落库、查询）
   llm.js           AI 客户端：工具定义、流式讲解、分层重试
-public/          前端：index.html + app.js + glossary.js（词库）+ narrator*.js（规则解说）+ style.css
-test/            回归用例（12 个 *-test.js + 一个子进程夹具）
+  coach.js         AI 训练教练：教练提示词、多轮历史与上下文组装
+public/          前端：index.html + app.js + glossary.js（词库）+ narrator*.js（规则解说）
+                 + coach.js（教练抽屉）+ style.css
+test/            回归用例（15 个 *-test.js + 一个子进程夹具）
 scripts/         开发与运维脚本：run-tests（统一入口）、sync-dist 构建、
                  gen-config-example 模板提取、setup、rewrite-pending、几个 probe-*
 deploy/          分发包专属材料：使用者 README、start.command、start.bat
@@ -184,7 +206,9 @@ cp config.example.json config.json
 ## 里程碑
 
 `v1.0.0` → `v1.1.0` → `v1.2.0` → `v1.2.1` → `v1.3.0` → `v1.3.1` → `pre-ai-explain`（接入 AI 前的基线）
-→ `v1.4.0`（AI 讲解 + 本地指标库 + function calling）。
+→ `v1.4.0`（AI 讲解 + 本地指标库 + function calling）
+→ `v1.5.0`（讲解覆盖到离线评测基准与指标库的全部图表）
+→ `v1.6.0`（AI 训练教练：悬浮球对话、多轮追问、可关的看板上下文）。
 
 回退到某个版本：`git checkout v1.4.0`。注意 `git push` 默认不带 tag，推里程碑要 `git push --tags`。
 

@@ -35,6 +35,7 @@ const CASES = [
   { file: 'metrics-test.js', desc: '前端指标全景与抽屉（jsdom，需 8787）' },
   { file: 'glossary-test.js', desc: '词库与知识点渲染（jsdom，需 8787）' },
   { file: 'glossary-charts-test.js', desc: 'benchmark 与指标库图表的 AI 讲解接入（jsdom，需 8787）' },
+  { file: 'coach-test.js', desc: 'AI 训练教练：提示词、工具集、上下文与前端对话（jsdom，需 8787）' },
   { file: 'views-test.js', desc: '各视图与导航（jsdom，需 8787）' },
   { file: 'ai-tool-test.js', desc: 'AI function calling 工具定义与调用' },
   { file: 'explain-prompt-test.js', desc: '讲解提示词按 kind 分流（纯本地）' },

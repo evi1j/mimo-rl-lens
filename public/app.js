@@ -2280,6 +2280,29 @@
     });
   }
 
+  /* 给 coach.js（AI 训练教练）用的最小接口。只暴露它真的需要的三样：
+     转义、工具名中文化，以及「此刻在看什么」—— 后者只有这个闭包知道
+     （state.view 与讲解抽屉当前打开的 glCur 都在里面）。
+     不暴露 state 本身：教练没有理由去改看板状态。 */
+  function getContext() {
+    var c = { view: state.view || "overview", chart: null, chartName: null, run: state.evRun || null };
+    if (!glCur) return c;
+    var bare = bareKey(glCur);
+    c.chart = glCur;
+    var d = METRIC_BY_KEY[bare];
+    if (d && d.zh) {
+      c.chartName = d.zh;
+    } else if (isBenchKey(glCur)) {
+      var b = (state.bench || []).filter(function (x) { return x.key === bare; })[0];
+      c.chartName = (b && b.title) || bare;
+    } else {
+      c.chartName = bare;
+    }
+    return c;
+  }
+
+  window.MIMO = { esc: esc, toolZh: toolZh, getContext: getContext };
+
   document.addEventListener("DOMContentLoaded", function () {
     initTheme();
     bindGlossary();

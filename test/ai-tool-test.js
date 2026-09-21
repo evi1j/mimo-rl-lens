@@ -20,9 +20,14 @@ const BASE = 'http://127.0.0.1:8787';
   console.log('工具调用测试\n');
 
   console.log('— 工具定义 —');
-  check('定义了 4 个工具', (llm.TOOLS || []).length === 4, String((llm.TOOLS || []).length));
+  /* 全量 6 个（AI 教练用得上），讲解只开放其中 4 个 —— 讲一张图不需要翻解说历史
+     和库概览，多喂工具会让模型跑去查无关的东西。两个数一起断言，免得以后
+     加工具时把讲解那条路也悄悄带胖。 */
   const names = (llm.TOOLS || []).map((t) => t.function && t.function.name);
-  ['list_metrics', 'query_series', 'run_status', 'query_bench'].forEach((n) => {
+  check('全量 6 个工具（教练用）', names.length === 6, names.join(','));
+  check('讲解只开放 4 个', (llm.EXPLAIN_TOOLS || []).length === 4,
+    (llm.EXPLAIN_TOOLS || []).map((t) => t.function.name).join(','));
+  ['list_metrics', 'query_series', 'run_status', 'query_bench', 'search_notes', 'db_overview'].forEach((n) => {
     check('有工具 ' + n, names.indexOf(n) >= 0, names.join(','));
   });
   (llm.TOOLS || []).forEach((t) => {

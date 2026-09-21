@@ -8,6 +8,7 @@ const path = require('path');
 const { at } = require('./paths.js'); // 根目录探测：源码在 src/，分发包是扁平的
 const { createEngine } = require(at('public', 'narrator-core.js'));
 const llm = require('./llm.js');
+const coach = require('./coach.js');
 const store = require('./store.js');
 
 /* 端口与监听地址从 config.json 的 server 段读，环境变量可临时覆盖。
@@ -376,6 +377,71 @@ const server = http.createServer(async (req, res) => {
       // 完整错误仍在服务端日志里，方便排查
       console.log('ai explain 失败：' + String(e.message || e).slice(0, 200));
       send({ error: friendlyAiError(e) });
+    }
+    try { res.end(); } catch (e) { /* 客户端已断开 */ }
+    return;
+  }
+
+  /* AI 训练教练：POST /api/coach —— 与 /api/explain 同一套 NDJSON 事件协议
+     （think / tool / delta / notice / restart / done / error），前端可以共用一套渲染。
+     区别在 payload：
+       question  必填，这一轮问什么
+       history   可选，[ {role:'user'|'assistant', content} ]，多轮追问用
+       context   可选，{view, chart, chartName, run} 此刻在看什么
+       useContext false 表示用户关掉了「参考当前页面」，此时 context 一个字都不带
+     body 比讲解大（带历史），所以上限放到 500KB。见 src/coach.js。 */
+  if (p === '/api/coach') {
+    if (req.method !== 'POST') { sendJSON(res, 405, { error: '请用 POST' }); return; }
+    let raw = '';
+    try {
+      for await (const chunk of req) {
+        raw += chunk;
+        if (raw.length > 500000) break;
+      }
+    } catch (e) {
+      sendJSON(res, 400, { error: '读取请求体失败' });
+      return;
+    }
+    let payload;
+    try { payload = JSON.parse(raw); } catch (e) {
+      sendJSON(res, 400, { error: '请求体不是合法 JSON' });
+      return;
+    }
+    if (!payload || typeof payload.question !== 'string' || !payload.question.trim()) {
+      sendJSON(res, 400, { error: '缺少 question（这一轮想问什么）' });
+      return;
+    }
+    if (payload.question.length > 4000) {
+      sendJSON(res, 400, { error: '问题太长了（上限 4000 字），拆开问更好' });
+      return;
+    }
+
+    res.writeHead(200, {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-accel-buffering': 'no',
+    });
+    let closed = false;
+    req.on('close', function () { closed = true; });
+    const sendC = function (obj) {
+      if (closed) return false;
+      try { res.write(JSON.stringify(obj) + '\n'); return true; } catch (e) { return false; }
+    };
+    try {
+      const out = await coach.coachReply(
+        payload,
+        function (t) { return sendC({ delta: t }); },
+        function (t, phase, round) { return sendC({ think: t, phase: phase || 'main', round: round || 0 }); },
+        function (info) { return sendC({ tool: info }); },
+        {
+          onNotice: function (msg) { return sendC({ notice: msg }); },
+          onRestart: function (info) { return sendC({ restart: info || {} }); },
+        });
+      sendC({ done: true, model: out.model, toolRounds: out.toolRounds || 0,
+              attempts: out.attempts || 1, truncated: !!out.truncated });
+    } catch (e) {
+      console.log('ai coach 失败：' + String(e.message || e).slice(0, 200));
+      sendC({ error: friendlyAiError(e) });
     }
     try { res.end(); } catch (e) { /* 客户端已断开 */ }
     return;

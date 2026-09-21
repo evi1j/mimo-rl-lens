@@ -1,0 +1,325 @@
+/* AI 训练教练（站点右下角悬浮球 + 对话抽屉）
+   1) 后端：教练提示词的硬约束（必须查数据、不许编、六个工具）、工具集拆分
+      （讲解仍只开放 4 个，教练开放 6 个）、历史截断与上下文注入、重试策略
+   2) 路由：/api/coach 的参数校验（缺 question / 方法不对），这两种情况
+      在校验阶段就返回，不会打到模型
+   3) 前端：悬浮球与抽屉、发送一轮、流式渲染（含轻量排版与转义）、多轮追问
+      带动历史、「参考当前页面」开关关掉后不再上报 context
+   AI 流在这一层拦下造流，不碰真实模型、不烧 token。
+   用法：node test/coach-test.js   （需 8787 上跑着服务） */
+const fs = require('fs');
+const path = require('path');
+const { JSDOM, VirtualConsole } = require('jsdom');
+
+const vc = new VirtualConsole();
+vc.on('jsdomError', function (e) { console.log('[jsdomError]', e && e.message); });
+
+const DIR = path.join(__dirname, '..', 'public');
+const BASE = process.env.BASE || 'http://127.0.0.1:8787/';
+const html = fs.readFileSync(path.join(DIR, 'index.html'), 'utf8');
+
+let pass = 0, fail = 0;
+function check(name, ok, extra) {
+  if (ok) { pass++; console.log('  ok   ' + name); }
+  else { fail++; console.log('  FAIL ' + name + (extra ? '  -> ' + extra : '')); }
+}
+const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+/* ================================================================
+   一、后端：提示词、工具集、组装逻辑（纯本地，不起 jsdom）
+   ================================================================ */
+const coach = require('../src/coach.js');
+const llm = require('../src/llm.js');
+
+console.log('\n=== 教练提示词 ===');
+const S = coach.COACH_SYSTEM;
+check('点明身份是训练教练', /AI 教练/.test(S));
+check('要求「数字必须来自工具」', /必须来自工具返回/.test(S));
+check('禁止凭印象编造', /绝不凭印象编|绝不能编造/.test(S));
+check('引用指标名前要先确认存在', /list_metrics/.test(S) && /确认它/.test(S));
+check('要求先查数据再回答（数据类问题）', /就先查数据再回答/.test(S));
+check('概念题可以不查（auto 的提示词侧配合）', /纯概念问题/.test(S));
+check('要求术语照用并当场解释', /术语照用/.test(S) && /当场解释/.test(S));
+check('禁止生活比喻代替解释', /禁止用/.test(S) && /比喻/.test(S));
+check('给出排版约定，且排除了代码块', /空行分段/.test(S) && /不要用代码块/.test(S));
+check('多轮：要求不重复已说过的内容', /不要重复已经说过的内容/.test(S));
+check('说明边界（看不到训练代码）', /看不到训练代码/.test(S));
+check('明确禁止在正文里写工具调用标签（写了会被剥掉，等于白写）',
+  /<tool_call>/.test(S) && /剥掉/.test(S));
+check('六个工具在提示词里都列了',
+  ['list_metrics', 'query_series', 'run_status', 'query_bench', 'search_notes', 'db_overview']
+    .every(function (t) { return S.indexOf(t) >= 0; }));
+
+console.log('\n=== 正文里的工具标签要剥掉，且不计入「已上屏字数」 ===');
+const seen = [];
+const f1 = llm.filterToolCallText(function (t) { seen.push(t); return true; });
+f1('先说结论');
+f1('<tool_call>{"name":"query_series","arguments":{}}</tool_call>');
+f1('再看依据。');
+check('上屏的只有正文', seen.join('') === '先说结论再看依据。', seen.join('|'));
+check('工具标签不计入已上屏字数', f1.emitted() === 9, String(f1.emitted()));
+const seen2 = [];
+const f2 = llm.filterToolCallText(function (t) { seen2.push(t); return true; });
+f2('甲<tool');                       // 标签被拆到两块里（流式常见）
+f2('_call>隐藏内容</tool_call>乙');
+check('标签跨块也能识别', seen2.join('') === '甲乙', seen2.join('|'));
+check('跨块时字数也对', f2.emitted() === 2, String(f2.emitted()));
+
+console.log('\n=== 工具集拆分 ===');
+const allNames = llm.TOOLS.map(function (t) { return t.function.name; });
+const expNames = llm.EXPLAIN_TOOLS.map(function (t) { return t.function.name; });
+check('教练拿到 6 个工具', allNames.length === 6, allNames.join(','));
+check('新增 search_notes 与 db_overview',
+  allNames.indexOf('search_notes') >= 0 && allNames.indexOf('db_overview') >= 0);
+check('讲解仍然只有 4 个（这次改动没影响它）',
+  expNames.length === 4 && expNames.indexOf('search_notes') < 0 && expNames.indexOf('db_overview') < 0,
+  expNames.join(','));
+
+console.log('\n=== 工具真的能查到数据 ===');
+const ov = llm.runTool('db_overview', {});
+check('db_overview 返回库概览', !ov.error && ov.metrics > 0 && ov.seriesRows > 0,
+  JSON.stringify(ov).slice(0, 120));
+check('db_overview 的中文摘要可读', /指标 \d+ 个/.test(llm.summarizeToolResult('db_overview', ov)),
+  llm.summarizeToolResult('db_overview', ov));
+const notes = llm.runTool('search_notes', { limit: 3 });
+check('search_notes 能取到解说记录', !notes.error && notes.count > 0, JSON.stringify(notes).slice(0, 120));
+check('记录的 lesson 被截断（不把旧解说整段捞回来）',
+  !notes.error && notes.notes.every(function (n) { return (n.lesson || '').length <= 240; }));
+const bad = llm.runTool('nope', {});
+check('未知工具的报错里带上可用清单', /没有名为 nope/.test(bad.error) && /search_notes/.test(bad.error), bad.error);
+
+console.log('\n=== 组装这一轮要发给模型的消息 ===');
+const mk = function (n, role) { return { role: role || 'user', content: '内容' + n }; };
+const many = [];
+for (let i = 0; i < 20; i++) many.push(mk(i, i % 2 ? 'assistant' : 'user'));
+const m1 = coach.buildMessages({ question: '训练到第几步了', history: many });
+check('历史被截到 8 条', m1.length === 1 + 8 + 1, '共 ' + m1.length + ' 条');
+check('system 在最前、本轮问题在最后',
+  m1[0].role === 'system' && m1[m1.length - 1].role === 'user');
+check('本轮问题单独成一条（不会和历史里的重复）',
+  m1[m1.length - 1].content.indexOf('问题：训练到第几步了') >= 0,
+  m1[m1.length - 1].content.slice(0, 60));
+
+const m2 = coach.buildMessages({
+  question: 'q', history: [{ role: 'tool', content: '不该进来' }, { role: 'user', content: 'ok' }],
+});
+check('非法角色（tool）被过滤掉', !m2.some(function (m) { return m.role === 'tool'; }));
+
+const longHist = coach.buildMessages({
+  question: 'q', history: [{ role: 'assistant', content: 'x'.repeat(5000) }],
+});
+const longMsg = longHist.filter(function (m) { return m.role === 'assistant'; })[0];
+check('单条历史被截到 1200 字',
+  longMsg.content.length === coach.COACH_HISTORY_CHARS, String(longMsg.content.length));
+
+console.log('\n=== 看板上下文注入 ===');
+const mCtx = coach.buildMessages({
+  question: '这个为什么掉', history: [],
+  context: { view: 'metrics', chart: 'tag:actor/entropy_loss', chartName: '策略熵', run: 'pro' },
+});
+const uCtx = mCtx[mCtx.length - 1].content;
+check('带上视图', /指标库视图/.test(uCtx), uCtx.split('\n')[0]);
+check('带上正打开的图表（用可读名，不是裸 key）', /策略熵/.test(uCtx) && uCtx.indexOf('tag:actor') < 0, uCtx);
+check('带上 run', /pro/.test(uCtx));
+const mNo = coach.buildMessages({
+  question: '这个为什么掉', history: [],
+  context: { view: 'metrics', chart: 'tag:actor/lr', chartName: '学习率' },
+  useContext: false,
+});
+check('开关关掉后一个字都不带',
+  mNo[mNo.length - 1].content.indexOf('[看板现状]') < 0, mNo[mNo.length - 1].content);
+const mNone = coach.buildMessages({ question: 'q', history: [] });
+check('没有上下文时也不报错、不加空块', mNone[mNone.length - 1].content === '问题：q',
+  mNone[mNone.length - 1].content);
+
+console.log('\n=== 重试策略：越往后越催它出正文 ===');
+const st0 = coach.coachStrategy(0, { explainMaxTokens: 4000 }, 'low');
+const st1 = coach.coachStrategy(1, { explainMaxTokens: 4000 }, 'low');
+const st2 = coach.coachStrategy(2, { explainMaxTokens: 4000 }, 'low');
+check('第一次用配置里的思考强度', st0.effort === 'low' && st0.maxTokens === 4000);
+check('第二次去掉思考强度并加额度', st1.effort === null && st1.maxTokens > st0.maxTokens);
+check('第三次再加大额度并补一句「直接给结论」', st2.maxTokens > st1.maxTokens && /直接输出/.test(st2.extra || ''));
+check('教练的成稿门槛比讲解低（一句话回答也算答成了）',
+  coach.COACH_MIN_CHARS < 200, String(coach.COACH_MIN_CHARS));
+
+/* ================================================================
+   二、路由：参数校验（这两种请求到不了模型）
+   ================================================================ */
+(async function () {
+  console.log('\n=== /api/coach 参数校验 ===');
+  const bad1 = await fetch(new URL('api/coach', BASE), {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+  });
+  const j1 = await bad1.json().catch(function () { return {}; });
+  check('缺 question → 400', bad1.status === 400, bad1.status + ' ' + JSON.stringify(j1));
+  check('错误说明是人话', /缺少 question/.test(j1.error || ''), j1.error);
+
+  const bad2 = await fetch(new URL('api/coach', BASE), {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: 'not json',
+  });
+  check('body 不是 JSON → 400', bad2.status === 400, String(bad2.status));
+
+  const bad3 = await fetch(new URL('api/coach', BASE), { method: 'GET' });
+  check('GET → 405', bad3.status === 405, String(bad3.status));
+
+  const bad4 = await fetch(new URL('api/coach', BASE), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ question: 'x'.repeat(4100) }),
+  });
+  check('超长问题 → 400', bad4.status === 400, String(bad4.status));
+
+  /* ================================================================
+     三、前端交互（jsdom）
+     ================================================================ */
+  console.log('\n=== 前端：悬浮球与抽屉 ===');
+
+  const dom = new JSDOM(html, {
+    runScripts: 'outside-only', pretendToBeVisual: true, url: BASE, virtualConsole: vc,
+  });
+  const { window } = dom;
+  const doc = window.document;
+
+  let pkgs = [];          // 每次 /api/coach 的 payload
+  let streamDelay = 0;    // 让流「慢」一点，好在生成途中检查按钮状态
+  /* 一行一个 JSON —— NDJSON 的硬性约定。两条 delta 必须各自成行，
+     挤在一行里 JSON.parse 会失败，前端会整行丢掉（第一版就是这么翻车的）。 */
+  const ND = [
+    '{"think":"先看训练到第几步了","phase":"tool","round":1}',
+    '{"tool":{"name":"run_status","args":{},"summary":"pro 第30步","round":1}}',
+    '{"think":"拿到数据了，组织回答","phase":"main","round":0}',
+    '{"delta":"### 当前进度\\n\\npro 已跑到 **第 30 步**。\\n\\n"}',
+    '{"delta":"- 重启 2 次\\n- 累计花费 262 万\\n\\n"}',
+    '{"delta":"<script>alert(1)</script> 这行是用来验证转义的。"}',
+    '{"done":true,"model":"mock-model","toolRounds":1,"attempts":1}',
+  ].join('\n') + '\n';
+
+  window.fetch = function (u, opt) {
+    const url = new URL(u, BASE).toString();
+    const method = (opt && opt.method) || 'GET';
+    if (/\/api\/ai\/test$/.test(url)) {
+      return Promise.resolve(new Response(
+        JSON.stringify({ enabled: true, ok: true, model: 'mock-model' }),
+        { status: 200, headers: { 'content-type': 'application/json' } }));
+    }
+    if (method === 'POST' && /\/api\/coach$/.test(url)) {
+      try { pkgs.push(JSON.parse(opt.body)); } catch (e) { pkgs.push({ parseError: String(e) }); }
+      return new Promise(function (resolve) {
+        setTimeout(function () {
+          resolve(new Response(ND, {
+            status: 200, headers: { 'content-type': 'application/x-ndjson' },
+          }));
+        }, streamDelay);
+      });
+    }
+    return fetch(url)
+      .catch(function (e) { console.log('  [fetch FAIL] ' + url + ' ' + e.message); throw e; });
+  };
+  window.requestAnimationFrame = function (cb) { return setTimeout(cb, 0); };
+
+  ['glossary.js', 'narrator.js', 'app.js', 'coach.js'].forEach(function (f) {
+    window.eval(fs.readFileSync(path.join(DIR, f), 'utf8'));
+  });
+  doc.dispatchEvent(new window.Event('DOMContentLoaded'));
+  await sleep(1200);
+
+  const $ = function (id) { return doc.getElementById(id); };
+  const click = function (el) {
+    el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  };
+  const q = function (sel) { return doc.querySelector(sel); };
+  const qa = function (sel) { return Array.from(doc.querySelectorAll(sel)); };
+
+  check('悬浮球在页面上', !!$('coach-fab'));
+  check('教练抽屉初始是收起的', $('coach-drawer').hidden === true);
+  click($('coach-fab'));
+  await sleep(60);
+  check('点球打开抽屉', $('coach-drawer').hidden === false);
+  check('首次打开有欢迎语（本地文案，不烧 token）',
+    /AI 训练教练/.test($('coach-body').textContent) && pkgs.length === 0);
+  check('给了快捷问题', qa('.coach-chip').length >= 3, qa('.coach-chip').length + ' 个');
+  check('上下文条默认开启并写明会带什么',
+    $('coach-ctx-sw').getAttribute('aria-pressed') === 'true' && /在看|在总览|在/.test($('coach-ctx-t').textContent),
+    $('coach-ctx-t').textContent);
+
+  console.log('\n=== 前端：发一轮，流式上屏 ===');
+  streamDelay = 260;
+  const box = $('coach-q');
+  box.value = '现在训练状态怎么样？';
+  $('coach-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(80);
+
+  check('发出的 payload 带上了本轮问题', pkgs.length === 1 && pkgs[0].question === '现在训练状态怎么样？',
+    JSON.stringify(pkgs[0] && pkgs[0].question));
+  check('首轮没有历史', Array.isArray(pkgs[0] && pkgs[0].history) && pkgs[0].history.length === 0,
+    JSON.stringify(pkgs[0] && pkgs[0].history));
+  check('带上了看板上下文', !!(pkgs[0] && pkgs[0].context && pkgs[0].context.view),
+    JSON.stringify(pkgs[0] && pkgs[0].context));
+  check('生成中：发送键收起、停止键出现',
+    $('coach-go').hidden === true && $('coach-stop').hidden === false);
+  check('用户消息立刻上屏', /现在训练状态怎么样/.test($('coach-body').textContent));
+  check('输入框已清空', box.value === '');
+
+  await sleep(900);
+
+  const out = q('.coach-out');
+  check('正文已渲染', !!out && /第 30 步/.test(out.textContent), (out && out.textContent || '').slice(0, 60));
+  check('轻量排版生效：小标题与列表都成了真实标签',
+    !!q('.coach-out .coach-h') && qa('.coach-out .coach-ul li').length >= 2,
+    'h=' + qa('.coach-out .coach-h').length + ' li=' + qa('.coach-out .coach-ul li').length);
+  check('**加粗** 被渲染成 <b>', !!q('.coach-out b'));
+  check('模型返回的 <script> 被转义（不会真的执行）',
+    out.innerHTML.indexOf('<script>') < 0 && out.innerHTML.indexOf('&lt;script&gt;') >= 0);
+  check('查询决策可见：显示调了什么工具、查到什么',
+    /训练进度/.test($('coach-body').textContent) && /pro 第30步/.test($('coach-body').textContent));
+  check('思考过程可折叠查看', !!q('.coach-think .coach-think-b') &&
+    /组织回答/.test(q('.coach-think .coach-think-b').textContent));
+  check('跑完恢复：发送键回来、停止键收起',
+    $('coach-go').hidden === false && $('coach-stop').hidden === true);
+
+  console.log('\n=== 前端：追问把上一轮带进历史 ===');
+  streamDelay = 0;
+  box.value = '那评测分数对得上吗？';
+  $('coach-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(500);
+  const p2 = pkgs[pkgs.length - 1];
+  check('第二次请求带上了上一轮', p2.history.length === 2, JSON.stringify(p2.history.map(function (m) { return m.role; })));
+  check('历史里是「问 + 答」两条，且答的是上一轮正文',
+    p2.history[0].role === 'user' && p2.history[1].role === 'assistant' &&
+    /第 30 步/.test(p2.history[1].content), JSON.stringify(p2.history[0]));
+  check('本轮问题不在历史里（避免重复一次）',
+    p2.history.every(function (m) { return m.content.indexOf('那评测分数对得上吗？') < 0; }));
+  check('两条回答各自成块', qa('.coach-msg-ai').length === 3, qa('.coach-msg-ai').length + ' 块');
+
+  console.log('\n=== 前端：可关的上下文 ===');
+  click($('coach-ctx-sw'));
+  await sleep(40);
+  check('点一下变成关闭态',
+    $('coach-ctx-sw').getAttribute('aria-pressed') === 'false' && /已关闭/.test($('coach-ctx-t').textContent),
+    $('coach-ctx-t').textContent);
+  box.value = '那不看页面，纯讲概念：熵坍缩是什么';
+  $('coach-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(400);
+  const p3 = pkgs[pkgs.length - 1];
+  check('关掉后不再上报 context', p3.useContext === false && !p3.context,
+    JSON.stringify({ useContext: p3.useContext, context: p3.context }));
+  click($('coach-ctx-sw'));
+  await sleep(30);
+  check('可以再打开', $('coach-ctx-sw').getAttribute('aria-pressed') === 'true');
+
+  console.log('\n=== 前端：快捷问题与关闭 ===');
+  click($('coach-fab'));
+  await sleep(30);
+  // 欢迎语 + 三轮回答 = 4 块；再点球不该又插一条欢迎语
+  check('再点球不会重复插欢迎语（已有对话时不重来）',
+    qa('.coach-msg-ai').length === 4, qa('.coach-msg-ai').length + ' 块');
+  click($('coach-close'));
+  await sleep(30);
+  check('关闭后抽屉收起', $('coach-drawer').hidden === true);
+
+  console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
+  try { dom.window.close(); } catch (e) {}
+  process.exit(fail ? 1 : 0);
+})().catch(function (e) {
+  console.log('测试异常:', e && e.stack);
+  process.exit(1);
+});

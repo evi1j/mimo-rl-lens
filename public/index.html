@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MiMo-V2.6 · RL 实时训练看板</title>
 <meta name="description" content="mimo-v2.6-pro / flash 强化学习训练实时指标面板，数据直连小米官方 trainer 日志。">
-<link rel="stylesheet" href="style.css?v=23">
+<link rel="stylesheet" href="style.css?v=24">
 </head>
 <body>
 
@@ -265,8 +265,44 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="glossary.js?v=23"></script>
-<script src="narrator.js?v=23"></script>
-<script src="app.js?v=23"></script>
+<!-- AI 训练教练：右下角悬浮球 + 右侧对话抽屉。
+     和上面那个「图表讲解」抽屉的分工：讲解是你点一张图、它讲这张图、单轮；
+     教练是你随口问，它自己决定去查哪些数据，能多轮追问，也能讲纯概念。 -->
+<button class="coach-fab" id="coach-fab" type="button"
+        title="问 AI 训练教练 · 它能查这块板爬下来的全部数据" aria-label="问 AI 训练教练">
+  <span class="coach-fab-mark" aria-hidden="true">教练</span>
+</button>
+
+<div class="coach-mask" id="coach-mask" hidden></div>
+<aside class="coach-drawer" id="coach-drawer" hidden aria-label="AI 训练教练">
+  <div class="coach-head">
+    <div>
+      <div class="coach-kicker">AI 训练教练</div>
+      <h3>这块板的数据它都能查</h3>
+    </div>
+    <button class="coach-close" id="coach-close" type="button" title="关闭">×</button>
+  </div>
+
+  <div class="coach-ctx" id="coach-ctx">
+    <button class="coach-ctx-sw" id="coach-ctx-sw" type="button" aria-pressed="true"></button>
+    <span class="coach-ctx-t" id="coach-ctx-t"></span>
+  </div>
+
+  <div class="coach-body" id="coach-body"></div>
+
+  <div class="coach-quick" id="coach-quick"></div>
+
+  <form class="coach-form" id="coach-form">
+    <textarea class="coach-q" id="coach-q" rows="1" autocomplete="off"
+              placeholder="问训练的事…（Enter 发送，Shift+Enter 换行）"></textarea>
+    <button class="coach-go" id="coach-go" type="submit">发送</button>
+    <button class="coach-stop" id="coach-stop" type="button" hidden>停止</button>
+  </form>
+</aside>
+
+<script src="glossary.js?v=24"></script>
+<script src="narrator.js?v=24"></script>
+<script src="app.js?v=24"></script>
+<script src="coach.js?v=24"></script>
 </body>
 </html>

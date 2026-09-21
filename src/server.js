@@ -9,6 +9,7 @@ const { at } = require('./paths.js'); // 根目录探测：源码在 src/，分�
 const { createEngine } = require(at('public', 'narrator-core.js'));
 const llm = require('./llm.js');
 const coach = require('./coach.js');
+const session = require('./session.js');
 const store = require('./store.js');
 
 /* 端口与监听地址从 config.json 的 server 段读，环境变量可临时覆盖。
@@ -86,6 +87,27 @@ function sendJSON(res, code, obj) {
     'content-length': buf.length,
   });
   res.end(buf);
+}
+
+/* 读 JSON 请求体。坏 JSON / 空 body 一律返回空对象 —— 这些辅助接口都允许不带
+   body（比如前端只 POST 一下表示「清空」），解析失败不该把整条请求打断。 */
+async function readJsonBody(req, maxBytes) {
+  let raw = '';
+  try {
+    for await (const chunk of req) {
+      raw += chunk;
+      if (raw.length > (maxBytes || 100000)) break;
+    }
+  } catch (e) { return {}; }
+  try { return JSON.parse(raw) || {}; } catch (e) { return {}; }
+}
+
+/* 会话标题：拿第一句话当标题，长就掐断。标题只是给用户认人的，
+   不准也没关系 —— 认得出是哪段对话就行。 */
+function titleOf(s) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  return t.length > 16 ? t.slice(0, 16) + '…' : t;
 }
 
 /* AI 出错时给观众看的一句话。原始错误（HTTP 400 {...}）上屏没人看得懂，
@@ -382,26 +404,64 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  /* 教练对话历史：前端的 msgs 只在内存里，刷新页面就没了，所以落一份在库里。
-       GET  /api/coach/history  最近 60 条，按时间升序，前端照顺序渲染
-       POST /api/coach/clear    清空（「清空对话」按钮）
-     只有这两条走 JSON，正经对话还是上面那条 NDJSON 流。 */
+  /* 教练会话：一段对话 = 一个 sid。消息原文按 sid 存在库里（界面显示的就是它），
+     摘要挂在会话上（只用来发给模型）。
+       GET  /api/coach/sessions        会话列表，按最近活跃排序
+       POST /api/coach/session         开一段新对话（body 可带 title）
+       POST /api/coach/session/delete  删掉一段（连同它的消息与摘要）
+       POST /api/coach/compress        手动压一次上下文（一般不用，收尾会自动压）
+       GET  /api/coach/history?sid=    某段对话的消息原文，给界面显示
+       POST /api/coach/clear           清空某段对话（body 带 sid）
+     只有这几条走 JSON，正经对话还是下面那条 NDJSON 流。 */
+  if (p === '/api/coach/sessions') {
+    sendJSON(res, 200, { ok: true, sessions: store.coachSessions(50) });
+    return;
+  }
+  if (p === '/api/coach/session') {
+    if (req.method !== 'POST') { sendJSON(res, 405, { error: '请用 POST' }); return; }
+    const body = await readJsonBody(req);
+    const sid = store.newSid();
+    const s = store.ensureCoachSession(sid, titleOf(body.title));
+    sendJSON(res, 200, { ok: true, session: s });
+    return;
+  }
+  if (p === '/api/coach/session/delete') {
+    if (req.method !== 'POST') { sendJSON(res, 405, { error: '请用 POST' }); return; }
+    const body = await readJsonBody(req);
+    const sid = String(body.sid || '').trim();
+    if (!sid) { sendJSON(res, 400, { error: '缺少 sid（要删哪一段对话）' }); return; }
+    sendJSON(res, 200, { ok: store.deleteCoachSession(sid) });
+    return;
+  }
+  if (p === '/api/coach/compress') {
+    if (req.method !== 'POST') { sendJSON(res, 405, { error: '请用 POST' }); return; }
+    const body = await readJsonBody(req);
+    const sid = String(body.sid || '').trim() || null;
+    const r = await session.compressSession(sid, { force: true });
+    sendJSON(res, 200, Object.assign({ ok: !!r.ok }, r));
+    return;
+  }
   if (p === '/api/coach/history') {
-    sendJSON(res, 200, { ok: true, msgs: store.coachHistory(60) });
+    const sid = String(url.searchParams.get('sid') || '').trim() || null;
+    sendJSON(res, 200, { ok: true, sid: sid || store.DEFAULT_SID, msgs: store.coachHistory(sid, 60) });
     return;
   }
   if (p === '/api/coach/clear') {
     if (req.method !== 'POST') { sendJSON(res, 405, { error: '请用 POST' }); return; }
-    const ok = store.clearCoachMsg();
+    const body = await readJsonBody(req);
+    const sid = String(body.sid || '').trim() || null;
+    const ok = store.clearCoachMsg(sid);
     sendJSON(res, 200, { ok: ok });
     return;
   }
 
   /* AI 训练教练：POST /api/coach —— 与 /api/explain 同一套 NDJSON 事件协议
      （think / tool / delta / notice / restart / done / error），前端可以共用一套渲染。
+     开头还会多推一条 {"context":{...}}：这一轮上下文的水位（给前端那个百分比条）。
      区别在 payload：
+       sid       可选，哪一段对话；不传就用默认会话
        question  必填，这一轮问什么
-       history   可选，[ {role:'user'|'assistant', content} ]，多轮追问用
+       history   可选，前端内存里那份；有 sid 时以库里的为准（刷新后也接得上）
        context   可选，{view, chart, chartName, run} 此刻在看什么
        useContext false 表示用户关掉了「参考当前页面」，此时 context 一个字都不带
      body 比讲解大（带历史），所以上限放到 500KB。见 src/coach.js。 */
@@ -431,9 +491,41 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const q = payload.question.trim();
+    const wantSid = String(payload.sid || '').trim() || null;
+    const sess = store.ensureCoachSession(wantSid, '');
+    const sid = (sess && sess.sid) || store.DEFAULT_SID;
+    const cfg = llm.loadConfig();
+
+    /* 历史必须在把本轮问题落库之前取 —— 否则本轮问题会在历史里出现一次、
+       在 messages 末尾又出现一次，模型看到的是同一个问题问了两遍。 */
+    let hist = store.coachHistory(sid, 200);
+    if (!hist.length && Array.isArray(payload.history)) hist = payload.history; // 库里没有就信前端那份
+
+    /* 上下文管理：会话内的内容全传，先按当前原文估一次水位；
+       快到窗口上限（默认 75%）就先压一次摘要，压完重算 —— 这一轮发的就是
+       「摘要 + 之后的原文」。压不成也不挡路，后面还有按预算丢最旧这条兜底。 */
+    const qText = coach.coachUserText(payload);
+    let turn = session.prepareTurn({ sid: sid, history: hist, questionText: qText,
+      systemText: coach.COACH_SYSTEM, cfg: cfg });
+    let didCompress = false;
+    if (cfg.enabled && session.needsCompress(turn.stats, cfg)) {
+      const r = await session.compressSession(sid);
+      didCompress = !!(r && r.ok);
+      turn = session.prepareTurn({ sid: sid, history: hist, questionText: qText,
+        systemText: coach.COACH_SYSTEM, cfg: cfg });
+    }
+    payload.history = turn.history;
+    payload.summary = turn.summary;
+    /* 这里就把 messages 组好并算准水位（coachReply 也会组一遍，但传进去的那份
+       它会直接采用），这样「丢了最旧的几条」这种事才能如实报给前端。 */
+    const plan = coach.buildPlan(payload);
+    payload.messages = plan.msgs;
+
     /* 先落库再生成：这一轮问了什么，哪怕后面生成失败也应留在记录里。
        落库失败不影响回答（store 内部只警告不抛）。 */
-    store.saveCoachMsg('user', payload.question.trim());
+    store.touchCoachSession(sid, titleOf(q));
+    store.saveCoachMsg('user', q, sid);
 
     res.writeHead(200, {
       'content-type': 'application/x-ndjson; charset=utf-8',
@@ -446,6 +538,18 @@ const server = http.createServer(async (req, res) => {
       if (closed) return false;
       try { res.write(JSON.stringify(obj) + '\n'); return true; } catch (e) { return false; }
     };
+    /* 水位：这一轮用了窗口的百分之多少、有没有压缩过、丢了最旧的几条。
+       丢条正常情况下是 0（压缩会先发生），不是 0 就说明压缩没赶上。 */
+    const ps = plan.stats;
+    sendC({
+      context: {
+        sid: sid, used: ps.used, window: ps.window, pct: ps.pct,
+        trigger: ps.trigger, ratio: ps.ratio,
+        compressed: turn.stats.compressed || 0, justCompressed: didCompress,
+        dropped: ps.dropped || 0, msgs: turn.history.length, summary: !!turn.summary,
+      },
+    });
+    if (didCompress) sendC({ notice: '这段对话已经很长，我把更早的部分压成了摘要，接着聊' });
     /* 正文累积在这里，收尾时落库。重跑正文轮（restart）要清零 ——
        否则重试的那几版会叠在一起存进去。 */
     let acc = '';
@@ -463,12 +567,15 @@ const server = http.createServer(async (req, res) => {
               attempts: out.attempts || 1, truncated: !!out.truncated });
       /* 只有真的写出正文才存：只写思考、正文空白的那轮不该留在历史里，
          否则下一轮会看到一条空回答，前端的做法也是这样（见 finish()）。 */
-      store.saveCoachMsg('assistant', acc.trim());
+      store.saveCoachMsg('assistant', acc.trim(), sid);
     } catch (e) {
       console.log('ai coach 失败：' + String(e.message || e).slice(0, 200));
       sendC({ error: friendlyAiError(e) });
     }
     try { res.end(); } catch (e) { /* 客户端已断开 */ }
+    /* 收尾之后再看一眼：快到线了就后台压一次，下一轮一上来就是干净的。
+       不等它 —— 这一轮已经答完，用户不该为压缩多等。 */
+    session.scheduleCompress(sid, { systemText: coach.COACH_SYSTEM });
     return;
   }
 

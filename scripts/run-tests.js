@@ -37,6 +37,7 @@ const CASES = [
   { file: 'glossary-charts-test.js', desc: 'benchmark 与指标库图表的 AI 讲解接入（jsdom，需 8787）' },
   { file: 'coach-test.js', desc: 'AI 训练教练：提示词、工具集、上下文与前端对话（jsdom，需 8787）' },
   { file: 'coach-history-test.js', desc: '教练对话历史落库：存/取/上限/清空（临时库，不碰真实数据）' },
+  { file: 'coach-session-test.js', desc: '教练会话与上下文压缩：token 估算/水位/主动压缩（临时库）' },
   { file: 'views-test.js', desc: '各视图与导航（jsdom，需 8787）' },
   { file: 'ai-tool-test.js', desc: 'AI function calling 工具定义与调用' },
   { file: 'explain-prompt-test.js', desc: '讲解提示词按 kind 分流（纯本地）' },

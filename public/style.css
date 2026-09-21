@@ -826,6 +826,37 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
 }
 .coach-close:hover { color: var(--text); }
 
+/* 会话条：一段对话一个 sid。抽屉只有几百像素宽，所以切换用一个下拉，
+   不铺一列列表 —— 那会把对话区挤没。 */
+.coach-sess {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 18px; border-bottom: 1px solid var(--border-soft);
+}
+.coach-new {
+  flex: none; cursor: pointer; font-size: 11.5px; line-height: 1;
+  padding: 5px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: transparent; color: var(--dim);
+}
+.coach-new:hover { color: var(--text); border-color: var(--dim-2); }
+.coach-sel {
+  flex: 1; min-width: 0; font-size: 11.5px; color: var(--text);
+  padding: 5px 6px; border-radius: 7px;
+  border: 1px solid var(--border-soft); background: var(--panel-2);
+}
+.coach-sel:focus { outline: none; border-color: var(--accent); }
+/* 上下文水位：后端压缩是悄悄做的，这里得让人看见 ——
+   否则用户会以为教练忘了前面聊过什么。 */
+.coach-meter {
+  flex: none; font-size: 11px; color: var(--dim-2); white-space: nowrap;
+  padding: 3px 8px; border-radius: 999px; background: var(--panel-2);
+  border: 1px solid var(--border-soft); cursor: default;
+}
+.coach-meter.is-hot {
+  color: var(--warn, #d18b2c);
+  border-color: color-mix(in srgb, var(--warn, #d18b2c) 45%, transparent);
+}
+.coach-meter[hidden] { display: none; }
+
 /* 上下文条：「它现在知道什么」必须写在明面上，否则用户没法判断回答受没受影响 */
 .coach-ctx {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;

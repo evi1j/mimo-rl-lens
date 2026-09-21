@@ -284,6 +284,14 @@
     <button class="coach-close" id="coach-close" type="button" title="关闭">×</button>
   </div>
 
+  <div class="coach-sess">
+    <button class="coach-new" id="coach-new" type="button"
+            title="开一段新对话（当前这段留着，可以从右边切回来）">＋ 新对话</button>
+    <select class="coach-sel" id="coach-sess" aria-label="切换对话"
+            title="切换对话：每段各自记着自己的上下文"></select>
+    <span class="coach-meter" id="coach-meter" hidden></span>
+  </div>
+
   <div class="coach-ctx" id="coach-ctx">
     <button class="coach-ctx-sw" id="coach-ctx-sw" type="button" aria-pressed="true"></button>
     <span class="coach-ctx-t" id="coach-ctx-t"></span>
@@ -301,9 +309,9 @@
   </form>
 </aside>
 
-<script src="glossary.js?v=30"></script>
-<script src="narrator.js?v=30"></script>
-<script src="app.js?v=30"></script>
-<script src="coach.js?v=30"></script>
+<script src="glossary.js?v=31"></script>
+<script src="narrator.js?v=31"></script>
+<script src="app.js?v=31"></script>
+<script src="coach.js?v=31"></script>
 </body>
 </html>

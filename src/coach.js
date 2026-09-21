@@ -3,7 +3,9 @@
    和 llm.explainMetric（讲一张图表）的区别，也是这个文件存在的理由：
 
    1) 多轮。讲解是「打开一张图 → 讲一遍 → 关掉」，教练是对话，要带 history，
-      要能追问「那这个和那个一起看呢」。历史要限长，否则几轮下来上下文就爆了。
+      要能追问「那这个和那个一起看呢」。会话（sid）内的内容全传，不按条数砍 ——
+      长对话靠 src/session.js 的主动压缩来控：快到窗口 75% 就先压一次摘要，
+      下一轮发「摘要 + 之后的原文」。原文始终留在库里，界面照旧显示完整对话。
    2) 工具开放全量（6 个，多了解说历史与库概览），且首轮 tool_choice 是 auto：
       讲解讲一张图必须先读数，所以它首轮强制 required；教练会被问「什么是 GRPO」
       这类概念题，逼它先查一遍库纯属浪费一轮、还多等十几秒。
@@ -16,6 +18,7 @@
    llm.js 的导出原语，这里只负责「怎么问」和「怎么判答完了」。 */
 
 const llm = require('./llm.js');
+const session = require('./session.js');
 
 /* 判定「答成了没有」的两个门槛，分工不同：
    COACH_MIN_CHARS —— 常规口径，够这个字数就是完整回答。
@@ -27,8 +30,12 @@ const llm = require('./llm.js');
    低于这个下限基本只有空响应或剥完标签剩下的换行，那才是真没写出来。 */
 const COACH_MIN_CHARS = 60;      // 低于这个字数才算「没答出来」，触发重试
 const COACH_MIN_STOP_CHARS = 12; // 自然收尾时：写到这个字数就算答成了
-const COACH_HISTORY_MAX = 8;     // 最多带回几条历史（一问一答各算一条）
-const COACH_HISTORY_CHARS = 1200; // 单条历史正文的截断长度，防止多轮后上下文爆掉
+/* 历史不再按「固定条数 + 每条砍字」裁：一个会话里的内容本来就该全传，
+   装不装得下交给 src/session.js 按模型窗口算（快到 75% 就先压摘要，
+   压完发「摘要 + 之后的原文」；真装不下才丢最旧的）。
+   这里只留一条硬上限：单条不许无限长 —— 一条几十字的问答谁都不会写这么长，
+   出现超长基本是模型把整张表贴了进来，那种内容进上下文只会把窗口吃掉。 */
+const COACH_MSG_MAX_CHARS = 8000;
 
 const COACH_SYSTEM = [
   '你是 MiMo 强化学习训练看板的 AI 教练。这块板实时抓取小米官方 trainer 的日志，',
@@ -129,22 +136,66 @@ function coachUserText(payload) {
   return (ctx ? ctx + '\n\n' : '') + '问题：' + q;
 }
 
-/* 组装完整 messages。历史只认 user/assistant 两种角色（tool 消息由工具轮自己
-   在当次请求里补，不能由前端回传 —— 那边的 tool_call_id 对不上）。
-   截断策略：先取最近 COACH_HISTORY_MAX 条，再逐条限长。 */
-function buildMessages(payload) {
-  const history = (payload && Array.isArray(payload.history)) ? payload.history : [];
-  const clean = history.filter(function (m) {
+/* 单条超长时掐头去尾留中间标记 —— 比硬砍一半好：结论常在开头，数据常在结尾。 */
+function clipMsg(s) {
+  const t = String(s == null ? '' : s);
+  if (t.length <= COACH_MSG_MAX_CHARS) return t;
+  const head = Math.round(COACH_MSG_MAX_CHARS * 0.7);
+  const tail = COACH_MSG_MAX_CHARS - head - 24;
+  return t.slice(0, head) + '\n…（本条中间省略）…\n' + t.slice(Math.max(head, t.length - tail));
+}
+
+/* 组装完整 messages 并算出这一轮的水位。
+   历史只认 user/assistant 两种角色（tool 消息由工具轮自己在当次请求里补，
+   不能由前端回传 —— 那边的 tool_call_id 对不上）。
+   顺序：system（含更早对话的摘要）→ 尽量全量的历史 → 本轮问题。
+   历史被裁只在两种情况下发生：单条超长（clipMsg），或预算真的装不下（丢最旧的）。 */
+function buildPlan(payload) {
+  payload = payload || {};
+  const cfg = llm.loadConfig();
+  const k = session.ctxConfig(cfg);
+
+  const history = (Array.isArray(payload.history) ? payload.history : []).filter(function (m) {
     return m && (m.role === 'user' || m.role === 'assistant') &&
       typeof m.content === 'string' && m.content.trim();
-  }).slice(-COACH_HISTORY_MAX);
+  }).map(function (m) {
+    return { role: m.role, content: clipMsg(m.content) };
+  });
 
-  const msgs = [{ role: 'system', content: COACH_SYSTEM }];
-  for (const m of clean) {
-    msgs.push({ role: m.role, content: String(m.content).slice(0, COACH_HISTORY_CHARS) });
-  }
-  msgs.push({ role: 'user', content: coachUserText(payload) });
-  return msgs;
+  const summary = String(payload.summary || '').trim();
+  /* 摘要挂在 system 里，不单独占一条消息：它就是背景资料，不是对话的一部分 ——
+     单独发一条 assistant 消息的话，模型容易把它当成自己说过的话接着复述。 */
+  const systemText = summary
+    ? COACH_SYSTEM + '\n\n[更早对话的摘要 —— 以下是这段会话更早部分压缩后的记录，' +
+      '供你接着答；要具体数字请重新查，不要直接引用摘要里的旧值]\n' + summary + '\n[摘要结束]'
+    : COACH_SYSTEM;
+
+  const questionText = coachUserText(payload);
+  const stats = session.measure({
+    systemText: systemText, summary: '', history: history, questionText: questionText,
+  }, cfg);
+  const budget = Math.max(0, k.window - k.reserve - stats.system - stats.question - 64);
+  const fit = session.fitHistory(history, budget);
+
+  const msgs = [{ role: 'system', content: systemText }];
+  for (const m of fit.kept) msgs.push({ role: m.role, content: m.content });
+  msgs.push({ role: 'user', content: questionText });
+
+  const out = Object.assign({}, stats, {
+    summary: session.estTokens(summary),
+    history: fit.tokens,
+    used: stats.system + stats.question + fit.tokens + k.reserve,
+    dropped: fit.dropped,
+    total: history.length,
+  });
+  out.pct = Math.min(100, Math.round((out.used / k.window) * 100));
+  out.over = out.used >= k.trigger;
+  return { msgs: msgs, stats: out, keep: k.keepMsgs, window: k.window, trigger: k.trigger };
+}
+
+/* 只要 messages 的时候用它（测试与调用方多数只要这个）。 */
+function buildMessages(payload) {
+  return buildPlan(payload).msgs;
 }
 
 /* 正文轮每次尝试的参数。与讲解的差别：最后那次的补话不说「250~450 字」，
@@ -184,7 +235,11 @@ async function coachReply(payload, onDelta, onThink, onTool, hooks) {
     throw new Error('AI 未启用（config.json 里 llm.enabled=false）');
   }
 
-  const messages = buildMessages(payload);
+  /* 调用方（server）可以先组好 messages 再传进来 —— 它要顺带拿水位给前端看，
+     组两次浪费。没传就自己组。 */
+  const plan = buildPlan(payload);
+  const messages = (Array.isArray(payload.messages) && payload.messages.length)
+    ? payload.messages : plan.msgs;
   const effort = cfg.explainReasoningEffort || 'low';
   hooks = hooks || {};
   const notify = function (msg) { if (typeof hooks.onNotice === 'function') hooks.onNotice(msg); };
@@ -284,6 +339,6 @@ async function coachReply(payload, onDelta, onThink, onTool, hooks) {
 }
 
 module.exports = {
-  COACH_SYSTEM, coachReply, buildMessages, coachUserText, contextText, coachStrategy,
-  COACH_MIN_CHARS, COACH_MIN_STOP_CHARS, COACH_HISTORY_MAX, COACH_HISTORY_CHARS,
+  COACH_SYSTEM, coachReply, buildMessages, buildPlan, coachUserText, contextText, coachStrategy,
+  COACH_MIN_CHARS, COACH_MIN_STOP_CHARS, COACH_MSG_MAX_CHARS, clipMsg,
 };

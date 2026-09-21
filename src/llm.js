@@ -26,6 +26,19 @@ const DEFAULTS = {
   // 工具轮：给 AI 配本地查询工具，让它自己决定查什么
   explainUseTools: true,
   toolMaxTokens: 800, // 工具轮只要输出 tool_calls，不需要长文本
+  /* 教练的上下文管理（多轮会话）。会话内的内容全传，靠「快到窗口上限就先压摘要」
+     来控制长度，不再按条数硬砍。四项都可在 config.json 的 llm 段覆盖：
+       coachContextWindow  模型上下文窗口（token）。接口不返回真值，只能自己填；
+                          填大了只会让压缩更晚发生，可能真撞上窗口上限。
+       coachCompressAt     占窗口多少就主动压一次（0.75 = 75%）。剩下的 25% 留给
+                          这一轮的生成与工具返回 —— 压缩必须发生在「还够用」的时候。
+       coachKeepMsgs       压缩后保留最近几条原文（刚聊完的两三轮最可能接着被追问）
+       coachSummaryChars   摘要字数上限
+     见 src/session.js。 */
+  coachContextWindow: 32768,
+  coachCompressAt: 0.75,
+  coachKeepMsgs: 6,
+  coachSummaryChars: 1500,
   /* 重试（分层，不是整条重来）：
      讲解链路有两段——工具轮查数据、正文轮写讲解。任何一段都可能被网络抖动、
      上游 5xx、思考吃满额度（正文空）、流中途断连打断。整条重跑代价最大：

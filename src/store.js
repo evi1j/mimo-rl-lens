@@ -144,17 +144,37 @@ function init() {
 
       /* 教练对话历史。落它只有一个理由：前端的 msgs 在内存里，刷新页面就没了。
          只存纯文本 { role, content } —— 思考过程与工具调用每轮都会重新生成，
-         存下来既占地方，又会把上一轮查到的旧数字带回下一轮。 */
+         存下来既占地方，又会把上一轮查到的旧数字带回下一轮。
+         sid 把消息归到某一段对话里（会话管理）；老库没有这一列，下面会补。 */
       CREATE TABLE IF NOT EXISTS coach_msg (
         id      INTEGER PRIMARY KEY AUTOINCREMENT,
         ts      REAL NOT NULL,
+        sid     TEXT,
         role    TEXT NOT NULL,
         content TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_coach_msg_id ON coach_msg(id DESC);
+
+      /* 一段对话 = 一个会话。消息是给人看的原文（永远不动），
+         这里额外记的是「给模型看的那份」的压缩状态：
+           summary      更早对话压出来的摘要（滚动累积，不是每轮重写）
+           summary_upto 摘要覆盖到 coach_msg.id 为止（这条也包含在内）
+         有了这两个字段，下一轮就能发「摘要 + 之后的原文」，
+         而界面上显示的仍然是完整原文。 */
+      CREATE TABLE IF NOT EXISTS coach_session (
+        sid           TEXT PRIMARY KEY,
+        title         TEXT,
+        created       REAL,
+        updated       REAL,
+        summary       TEXT,
+        summary_upto  INTEGER DEFAULT 0,
+        summary_ts    REAL,
+        compress_cnt  INTEGER DEFAULT 0
+      );
     `);
     // WAL 默认 1000 页才自动 checkpoint，服务常驻时容易攒到几 MB。压低一些。
     db.exec('PRAGMA wal_autocheckpoint = 256');
+    migrateCoachMsg();
     ready = true;
     console.log('sqlite: 存档已就绪（驱动 ' + driver + '）');
   } catch (e) {
@@ -552,20 +572,164 @@ function searchNarrator(q, limit) {
   } catch (e) { return []; }
 }
 
-/* ---------- 教练对话历史 ----------
-   落库是为了刷新后还能接着聊。写入失败一律只警告不抛 —— 它只是「记忆」，
+/* ---------- 教练对话：会话（sid）与消息 ----------
+   两条界线，改动前先看清楚：
+     1) 消息是「给人看的原文」，只增不改。压缩只影响发给模型的那一份，
+        绝不动这里 —— 界面显示的永远是完整对话。
+     2) 会话是「给模型看的那份上下文」的边界：一个 sid 一段对话，
+        摘要（summary）挂在会话上，不挂在消息上。 */
+
+const LEGACY_SID = 's_legacy';   // 老库里已有的消息归到这里，别让旧对话消失
+const DEFAULT_SID = 'default';   // 没传 sid 时的兜底（老接口与单测还在这么调）
+
+function now() { return Date.now() / 1000; }
+
+/* 老库升级：coach_msg 原本没有 sid 列。补列 → 把已有消息归到 LEGACY_SID →
+   给它们建一个会话，这样升级后打开页面还能看到此前聊的内容。
+   三步都允许失败：补列失败（比如是只读库）时，后面的查询仍能跑，只是没有会话概念。 */
+function migrateCoachMsg() {
+  try {
+    const cols = db.prepare('PRAGMA table_info(coach_msg)').all().map(function (c) { return c.name; });
+    if (cols.indexOf('sid') < 0) db.exec('ALTER TABLE coach_msg ADD COLUMN sid TEXT');
+  } catch (e) {
+    console.warn('sqlite: coach_msg 补 sid 列失败', e.message);
+  }
+  try {
+    db.prepare('UPDATE coach_msg SET sid=? WHERE sid IS NULL OR sid=?').run(LEGACY_SID, '');
+    const r = db.prepare('SELECT COUNT(*) AS c FROM coach_msg WHERE sid=?').get(LEGACY_SID);
+    if (r && r.c > 0) {
+      db.prepare(
+        'INSERT OR IGNORE INTO coach_session (sid,title,created,updated) VALUES (?,?,?,?)'
+      ).run(LEGACY_SID, '此前的对话', now(), now());
+    }
+  } catch (e) {
+    console.warn('sqlite: 旧教练消息归档失败', e.message);
+  }
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_coach_msg_sid ON coach_msg(sid, id)'); } catch (e) {}
+}
+
+function newSid() {
+  return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+/* 会话列表：按最近活跃排序，带上条数与压缩状态（前端切换与水位条要用）。 */
+function coachSessions(limit) {
+  if (!init()) return [];
+  const n = Math.max(1, Math.min(Number(limit) || 50, 200));
+  try {
+    const rows = db.prepare(
+      'SELECT * FROM coach_session ORDER BY updated DESC, created DESC LIMIT ?'
+    ).all(n);
+    const cnt = db.prepare('SELECT sid, COUNT(*) AS c FROM coach_msg GROUP BY sid').all();
+    const map = {};
+    cnt.forEach(function (r) { map[r.sid] = r.c; });
+    return rows.map(function (r) {
+      return {
+        sid: r.sid, title: r.title || '', created: r.created, updated: r.updated,
+        msgs: map[r.sid] || 0,
+        summary: r.summary || '',
+        summaryUpto: Number(r.summary_upto) || 0,
+        compressCnt: Number(r.compress_cnt) || 0,
+      };
+    });
+  } catch (e) {
+    console.warn('sqlite: 读取会话列表失败', e.message);
+    return [];
+  }
+}
+
+function getCoachSession(sid) {
+  if (!init() || !sid) return null;
+  try {
+    const r = db.prepare('SELECT * FROM coach_session WHERE sid=?').get(sid);
+    if (!r) return null;
+    return {
+      sid: r.sid, title: r.title || '', created: r.created, updated: r.updated,
+      summary: r.summary || '', summaryUpto: Number(r.summary_upto) || 0,
+      summaryTs: r.summary_ts || 0, compressCnt: Number(r.compress_cnt) || 0,
+    };
+  } catch (e) { return null; }
+}
+
+/* 会话不存在就建。title 只在该会话还没有标题时生效（首轮问题当标题）。 */
+function ensureCoachSession(sid, title) {
+  if (!init()) return null;
+  const id = sid || DEFAULT_SID;
+  try {
+    const r = db.prepare('SELECT sid, title FROM coach_session WHERE sid=?').get(id);
+    if (!r) {
+      db.prepare('INSERT INTO coach_session (sid,title,created,updated) VALUES (?,?,?,?)')
+        .run(id, title || '', now(), now());
+    } else if (!r.title && title) {
+      db.prepare('UPDATE coach_session SET title=? WHERE sid=?').run(title, id);
+    }
+    return getCoachSession(id);
+  } catch (e) {
+    console.warn('sqlite: 建会话失败', e.message);
+    return null;
+  }
+}
+
+function touchCoachSession(sid, title) {
+  if (!init()) return null;
+  const id = sid || DEFAULT_SID;
+  try {
+    db.prepare('UPDATE coach_session SET updated=? WHERE sid=?').run(now(), id);
+    if (title) {
+      db.prepare('UPDATE coach_session SET title=? WHERE sid=? AND (title IS NULL OR title=?)')
+        .run(title, id, '');
+    }
+  } catch (e) { /* 会话不存在就算了，不该影响聊天 */ }
+  return getCoachSession(id);
+}
+
+function deleteCoachSession(sid) {
+  if (!init() || !sid) return false;
+  try {
+    db.exec('BEGIN');
+    db.prepare('DELETE FROM coach_msg WHERE sid=?').run(sid);
+    db.prepare('DELETE FROM coach_session WHERE sid=?').run(sid);
+    db.exec('COMMIT');
+    return true;
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (e2) {}
+    console.warn('sqlite: 删除会话失败', e.message);
+    return false;
+  }
+}
+
+/* 写摘要。upto 是这条摘要覆盖到的最后一条消息 id —— 下一轮从它之后开始取原文。 */
+function saveCoachSummary(sid, text, upto) {
+  if (!init() || !sid) return false;
+  const t = String(text == null ? '' : text).trim();
+  if (!t) return false;
+  try {
+    const r = db.prepare('SELECT compress_cnt FROM coach_session WHERE sid=?').get(sid);
+    db.prepare(
+      'UPDATE coach_session SET summary=?, summary_upto=?, summary_ts=?, compress_cnt=? WHERE sid=?'
+    ).run(t, Number(upto) || 0, now(), (Number(r && r.compress_cnt) || 0) + 1, sid);
+    return true;
+  } catch (e) {
+    console.warn('sqlite: 摘要落库失败', e.message);
+    return false;
+  }
+}
+
+/* 落库是为了刷新后还能接着聊。写入失败一律只警告不抛 —— 它只是「记忆」，
    不该因为存不下就让这一轮回答失败。 */
-function saveCoachMsg(role, content) {
+function saveCoachMsg(role, content, sid) {
   const text = String(content == null ? '' : content).trim();
   if (!text) return false;          // 空正文（含只写思考的那轮）不进历史
   if (!init()) return false;
+  const id = sid || DEFAULT_SID;
   try {
-    db.prepare('INSERT INTO coach_msg (ts, role, content) VALUES (?,?,?)')
-      .run(Date.now() / 1000, role === 'user' ? 'user' : 'assistant', text);
-    // 只留最近 200 条：对话再长也不会把库撑大，反正回传模型只用最后 8 条
+    db.prepare('INSERT INTO coach_msg (ts, sid, role, content) VALUES (?,?,?,?)')
+      .run(now(), id, role === 'user' ? 'user' : 'assistant', text);
+    // 每个会话只留最近 200 条：对话再长也不会把库撑大
     db.prepare(
-      'DELETE FROM coach_msg WHERE id NOT IN (SELECT id FROM coach_msg ORDER BY id DESC LIMIT 200)'
-    ).run();
+      'DELETE FROM coach_msg WHERE sid=? AND id NOT IN' +
+      ' (SELECT id FROM coach_msg WHERE sid=? ORDER BY id DESC LIMIT 200)'
+    ).run(id, id);
     return true;
   } catch (e) {
     console.warn('sqlite: 教练历史落库失败', e.message);
@@ -573,24 +737,41 @@ function saveCoachMsg(role, content) {
   }
 }
 
-/* 取最近 n 条，按时间升序（旧的在前）—— 前端直接顺序渲染，后端组装 messages 也要这个顺序。 */
-function coachHistory(limit) {
+/* 取某会话最近 n 条，按时间升序（旧的在前）—— 前端直接顺序渲染，
+   后端组装 messages 也要这个顺序。id 一并带回：摘要要记录「压到哪一条为止」。 */
+function coachHistory(sid, limit) {
   if (!init()) return [];
+  /* 老调用是 coachHistory(limit)。数字第一参一律当条数 —— 否则会被当成 sid，
+     查出一个不存在的会话、静默返回空历史（那等于让 AI 忘掉整段对话）。 */
+  if (typeof sid === 'number') { limit = sid; sid = null; }
+  const id = sid || DEFAULT_SID;
   const n = Math.max(1, Math.min(Number(limit) || 50, 200));
   try {
-    return db.prepare('SELECT role, content, ts FROM coach_msg ORDER BY id DESC LIMIT ?')
-      .all(n)
+    return db.prepare('SELECT id, role, content, ts FROM coach_msg WHERE sid=? ORDER BY id DESC LIMIT ?')
+      .all(id, n)
       .reverse()
-      .map(function (r) { return { role: r.role, content: r.content, ts: r.ts }; });
+      .map(function (r) { return { id: r.id, role: r.role, content: r.content, ts: r.ts }; });
   } catch (e) {
     console.warn('sqlite: 读取教练历史失败', e.message);
     return [];
   }
 }
 
-function clearCoachMsg() {
+/* 清空一个会话：消息原文与摘要一起清（摘要是这些消息的压缩版，留着就是脏数据）。 */
+function clearCoachMsg(sid) {
   if (!init()) return false;
-  try { db.exec('DELETE FROM coach_msg'); return true; } catch (e) { return false; }
+  const id = sid || DEFAULT_SID;
+  try {
+    db.exec('BEGIN');
+    db.prepare('DELETE FROM coach_msg WHERE sid=?').run(id);
+    db.prepare('UPDATE coach_session SET summary=NULL, summary_upto=0, summary_ts=NULL WHERE sid=?')
+      .run(id);
+    db.exec('COMMIT');
+    return true;
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (e2) {}
+    return false;
+  }
 }
 
 function stats() {
@@ -604,6 +785,7 @@ function stats() {
     const bc = db.prepare('SELECT COUNT(*) AS c FROM bench').get();
     const rs = db.prepare('SELECT COUNT(*) AS c FROM run_state').get();
     const cm = db.prepare('SELECT COUNT(*) AS c FROM coach_msg').get();
+    const cs = db.prepare('SELECT COUNT(*) AS c FROM coach_session').get();
     let size = 0;
     try { size = fs.statSync(DB_FILE).size; } catch (e) {}
     return {
@@ -611,7 +793,7 @@ function stats() {
       metrics: m.c, metricsFrom: m.t0, metricsTo: m.t1,
       perRun: perRun, narrator: n.c,
       series: sv.c, seriesTags: sv.tags, seriesMaxStep: sv.s1,
-      tagMeta: tg.c, bench: bc.c, runState: rs.c, coachMsg: cm.c,
+      tagMeta: tg.c, bench: bc.c, runState: rs.c, coachMsg: cm.c, coachSession: cs.c,
     };
   } catch (e) {
     return { enabled: true, error: e.message };
@@ -624,6 +806,8 @@ module.exports = {
   saveSeries, saveTagMeta, saveBench, saveRunState,
   querySeries, searchTags, queryBench, queryRunState, latestStep, checkpoint, unitFor,
   saveCoachMsg, coachHistory, clearCoachMsg,
+  coachSessions, getCoachSession, ensureCoachSession, touchCoachSession, deleteCoachSession,
+  saveCoachSummary, newSid, LEGACY_SID, DEFAULT_SID,
   get enabled() { return init(); },
   get driver() { return driver; },
   get reason() { return initError; },

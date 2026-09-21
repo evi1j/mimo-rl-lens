@@ -20,6 +20,12 @@
     "retryMax": 2,
     "bodyAttempts": 3,
     "enoughChars": 200,
-    "retryBackoffMs": 800
+    "retryBackoffMs": 800,
+
+    "_coachContext": "AI 教练的多轮上下文管理。会话内的内容全传；快到窗口上限就先把更早的对话压成摘要，下一轮发「摘要 + 之后的原文」。原文始终留在库里，界面显示的还是完整对话",
+    "coachContextWindow": 32768,
+    "coachCompressAt": 0.75,
+    "coachKeepMsgs": 6,
+    "coachSummaryChars": 1500
   }
 }

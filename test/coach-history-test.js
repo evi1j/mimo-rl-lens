@@ -47,16 +47,24 @@ check('role 只认 user / assistant（其它一律按 assistant 存，不写脏�
 
 console.log('\n=== 条数上限 ===');
 for (let i = 0; i < 240; i++) store.saveCoachMsg(i % 2 ? 'assistant' : 'user', '第 ' + i + ' 条');
-const capped = store.coachHistory(300);
+const capped = store.coachHistory(null, 300);
 check('只留最近 200 条，不会把库撑大', capped.length === 200, capped.length + ' 条');
 check('留下的是最新的（最后一条）', /第 239 条/.test(capped[capped.length - 1].content),
   capped[capped.length - 1].content);
 check('最早的被丢掉了', !capped.some(function (m) { return /第 0 条/.test(m.content); }));
 
 console.log('\n=== 取条数上限 ===');
-check('limit 生效', store.coachHistory(5).length === 5, String(store.coachHistory(5).length));
-check('limit 非法时回落 50 条', store.coachHistory('x').length === 50, String(store.coachHistory('x').length));
-check('limit 超过上限也不会超过库存', store.coachHistory(9999).length === 200);
+/* 现在多了一个参数：sid（哪一段对话）。不传就是默认会话，老的调用方式仍然成立。
+   会话隔离与摘要那部分在 coach-session-test.js 里，这里只管存取本身。 */
+check('limit 生效', store.coachHistory(null, 5).length === 5, String(store.coachHistory(null, 5).length));
+check('limit 非法时回落 50 条', store.coachHistory(null, 'x').length === 50,
+  String(store.coachHistory(null, 'x').length));
+check('limit 超过上限也不会超过库存', store.coachHistory(null, 9999).length === 200);
+check('换个 sid 就是另一段对话（互不串台）', (function () {
+  store.saveCoachMsg('user', '另一段会话的内容', 's-other');
+  return store.coachHistory('s-other', 50).length === 1 &&
+    store.coachHistory(null, 200).every(function (m) { return m.content.indexOf('另一段会话') < 0; });
+})());
 
 console.log('\n=== 清空 ===');
 check('清空返回成功', store.clearCoachMsg() === true);

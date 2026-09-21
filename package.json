@@ -1,6 +1,6 @@
 {
   "name": "mimo-train-live",
-  "version": "1.6.5",
+  "version": "1.7.0",
   "private": true,
   "license": "UNLICENSED",
   "description": "训练实况看板：指标曲线 + 图表 AI 讲解 + AI 训练教练（可查全部落库数据）",

@@ -31,6 +31,7 @@
 
   var HISTORY_MAX = 8;           // 回传几轮历史，和后端 COACH_HISTORY_MAX 对齐
   var CTX_KEY = "mtl-coach-ctx"; // 「参考当前页面」开关的记忆
+  var SID_KEY = "mtl-coach-sid"; // 上次在聊哪一段对话（刷新后接着那一段）
   var GREET_TEXT = "我是 AI 训练教练。这块板爬下来的数据我都能查 —— 两个 run 的逐指标历史、" +
     "离线评测分数、训练进度与花费，还有看板记下来的事件解说；训练上的概念也可以直接问。" +
     "问我之前，我会自己决定该去查哪些数据。";
@@ -42,7 +43,12 @@
     "熵坍缩是什么，在这块板上怎么看出来",
   ];
 
+  /* 会话（sid）：一段对话一个 sid。库里那份才是准的（刷新后还在），
+     前端这份 msgs 只是「当前显示的内容 + 库不可用时回传给后端」的兜底。 */
   var msgs = [];    // 对话内容，只存 { role, content } —— 原样回传给后端当 history
+  var sid = "";     // 当前会话；为空表示还没拿到（后端会归到默认会话）
+  var sessList = [];    // 会话列表（切换下拉用）
+  var histPending = 0;  // 还有几次历史请求在飞（避免欢迎语被插两遍）
   var busy = false; // 正在生成
   var token = 0;    // 自增让旧流的回调失效，避免两次回答互相覆盖
   var ctl = null;   // AbortController，用于「停止」
@@ -308,7 +314,7 @@
 
     // 历史必须在把本轮问题放进去之前取 —— 本轮问题单独走 question 字段传，
     // 否则后端会看到同一个问题出现两次。
-    var hist = msgs.slice(-HISTORY_MAX).map(function (m) {
+    var hist = msgs.map(function (m) {
       return { role: m.role, content: m.content };
     });
     msgs.push({ role: "user", content: text });
@@ -373,6 +379,10 @@
         v.out.innerHTML = rich(txt);
         msgs.push({ role: "assistant", content: txt });
         refreshClearUI();
+        /* 会话标题是拿第一句话起的（后端写的）：第一轮回完刷一次列表，
+           下拉里就不再是「未命名对话」了。之后每轮都刷会打断正在展开的下拉。 */
+        var cur = currentSess();
+        if (!cur || !cur.title) refreshSessions();
       } else {
         v.out.hidden = true;
       }
@@ -387,7 +397,7 @@
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        question: text, history: hist,
+        question: text, history: hist, sid: sid,
         context: ctx, useContext: useCtx,
       }),
       signal: ctl ? ctl.signal : undefined,
@@ -490,6 +500,10 @@
       v.status.textContent = j.notice;
       return;
     }
+    /* 上下文水位：这一轮占窗口的百分之多少、有没有压过。
+       放在这里显示，不是为了好看 —— 压缩是后端悄悄做的，
+       用户得知道「更早的对话被压成摘要了」，不然会觉得它忘了。 */
+    if (j.context) { setMeter(j.context); return; }
     if (j.restart) {
       /* 重跑正文轮。上一版内容不丢，收成一个折叠块留在上面 ——
          用户可能正看到一半，突然被换掉会以为看错了。 */
@@ -560,17 +574,117 @@
       box.appendChild(b);
     });
   }
+  /* ---------------- 会话：新对话 / 切换 / 水位 ----------------
+     后端按 sid 存整段对话（原文照存，压缩只动发给模型那一份），
+     这里负责：拉列表、记住上次在聊哪段、切过去、开新的一段。 */
+  function rememberSid() {
+    try { localStorage.setItem(SID_KEY, sid || ""); } catch (e) {}
+  }
+
+  function renderSessions() {
+    var sel = $("coach-sess");
+    if (!sel) return;
+    var keep = sid || sel.value;
+    sel.innerHTML = "";
+    sessList.forEach(function (s) {
+      var o = el("option", null, (s.title || "未命名对话") + "（" + (s.msgs || 0) + " 条）");
+      o.value = s.sid;
+      sel.appendChild(o);
+    });
+    sel.value = keep;
+    if (sel.value !== keep) sel.value = ""; // 这段已经被删了，等下一次列表刷新
+  }
+
+  function refreshSessions() {
+    return fetch("api/coach/sessions", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        sessList = (j && Array.isArray(j.sessions)) ? j.sessions : [];
+        renderSessions();
+        return sessList;
+      })
+      .catch(function () { return sessList; });
+  }
+
+  /* 切到某段对话：清掉界面上现有的内容，再把它自己的历史取回来。 */
+  function useSession(id, load) {
+    sid = id || "";
+    rememberSid();
+    renderSessions();
+    msgs.length = 0;
+    var box = body();
+    if (box) box.innerHTML = "";
+    hideQuick();
+    resetMeter();
+    refreshClearUI();
+    if (load !== false) loadHistory();
+    else { pushWho("ai", GREET_TEXT); renderQuick(); }
+  }
+
+  function newSession() {
+    if (busy) return;
+    fetch("api/coach/session", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    }).then(function (r) { return r.json(); })
+      .then(function (j) {
+        var s = (j && j.session) || {};
+        return refreshSessions().then(function () { useSession(s.sid || "", false); });
+      })
+      .catch(function () { useSession("", false); });
+  }
+
+  /* 首次进入：拿列表 → 优先回到上次那段；一个都没有就开一段新的。 */
+  function bootSessions() {
+    return refreshSessions().then(function (list) {
+      if (!list.length) return newSession();
+      var saved = "";
+      try { saved = localStorage.getItem(SID_KEY) || ""; } catch (e) {}
+      var hit = list.filter(function (s) { return s.sid === saved; })[0];
+      useSession((hit || list[0]).sid, true);
+      return null;
+    });
+  }
+
+  /* ---------------- 上下文水位条 ---------------- */
+  function resetMeter() {
+    var m = $("coach-meter");
+    if (m) { m.hidden = true; m.textContent = ""; m.className = "coach-meter"; }
+  }
+
+  function setMeter(c) {
+    var m = $("coach-meter");
+    if (!m || !c) return;
+    var pct = Math.max(0, Math.min(100, Number(c.pct) || 0));
+    m.hidden = false;
+    m.textContent = "上下文 " + pct + "%";
+    m.className = "coach-meter" + (pct >= 80 ? " is-hot" : "");
+    var k = function (n) { return Math.round((Number(n) || 0) / 1000) + "k"; };
+    var bits = ["约 " + k(c.used) + " / " + k(c.window) + " tokens"];
+    if (c.summary) bits.push("更早的部分已压成摘要");
+    if (c.compressed) bits.push("累计压缩 " + c.compressed + " 次");
+    if (c.dropped) bits.push("本轮丢掉最旧的 " + c.dropped + " 条");
+    bits.push("到 " + Math.round((Number(c.ratio) || 0.75) * 100) + "% 会自动压缩");
+    m.title = bits.join("；");
+  }
+
   /* ---------------- 历史：刷新后接着聊 / 清空 ----------------
-     对话原本只在 msgs 里（内存），刷新就没了。现在后端落了一份，
+     对话原本只在 msgs 里（内存），刷新就没了。现在后端按会话落了一份，
      这里负责取回来渲染 —— 只恢复文本：思考过程与工具调用属于「当时那次生成」，
      重建出来只会让页面变长，而且下一轮本来就会重新查。 */
   function loadHistory() {
-    fetch("api/coach/history", { cache: "no-store" })
+    var url = "api/coach/history" + (sid ? ("?sid=" + encodeURIComponent(sid)) : "");
+    histPending++;
+    return fetch(url, { cache: "no-store" })
       .then(function (r) { return r.json(); })
       .then(function (j) {
         var list = (j && Array.isArray(j.msgs)) ? j.msgs : [];
+        if (j && j.sid) { sid = j.sid; rememberSid(); }
         var box = body();
-        if (!list.length || !box) return;
+        if (!list.length || !box) {
+          if (box && !box.childNodes.length) { pushWho("ai", GREET_TEXT); renderQuick(); }
+          refreshClearUI();
+          return;
+        }
         box.appendChild(el("div", "coach-sep", "以上是上次的对话"));
         list.forEach(function (m) {
           var txt = String((m && m.content) || "");
@@ -582,7 +696,13 @@
         refreshClearUI();
         toBottom(box);
       })
-      .catch(function () { /* 拿不到就当没有，不影响聊天 */ });
+      .catch(function () { /* 拿不到就当没有，不影响聊天 */ })
+      .then(function () { histPending--; });
+  }
+
+  function currentSess() {
+    for (var i = 0; i < sessList.length; i++) if (sessList[i].sid === sid) return sessList[i];
+    return null;
   }
 
   function refreshClearUI() {
@@ -616,7 +736,8 @@
 
   function doClear() {
     fetch("api/coach/clear", {
-      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sid: sid }),
     }).catch(function () {
       /* 库清不掉也照样把界面清了：至少这次会话是干净的，
          下次刷新会重新读库 —— 那种情况下面板上会再出现旧消息，但概率极低。 */
@@ -648,7 +769,9 @@
     if (m) m.hidden = false;
     refreshCtx();
     if (avail === null) probe();
-    if (!body().childNodes.length) {
+    /* 历史是异步取回来的，那段时间里别插欢迎语 —— 否则会先插一条、
+       取回来的内容再插一条，看着像重复开场。 */
+    if (!body().childNodes.length && !histPending) {
       pushWho("ai", GREET_TEXT);
       renderQuick();
     }
@@ -740,6 +863,15 @@
     }
     var clr = $("coach-clear");
     if (clr) clr.addEventListener("click", onClearClick);
+    var nb = $("coach-new");
+    if (nb) nb.addEventListener("click", newSession);
+    var sel = $("coach-sess");
+    if (sel) {
+      sel.addEventListener("change", function () {
+        if (busy) { renderSessions(); return; }
+        useSession(sel.value, true);
+      });
+    }
 
     document.addEventListener("keydown", function (e) {
       if (e.key !== "Escape") return;
@@ -759,7 +891,7 @@
     probe();
     refreshCtx();
     refreshClearUI();
-    loadHistory();
+    bootSessions();   // 拉会话列表 → 回到上次那段（没有就开一段新的）
   }
 
   if (document.readyState === "loading") {
@@ -771,5 +903,9 @@
   window.MIMO_COACH = {
     send: send, open: openPanel, close: closePanel, msgs: msgs,
     load: loadHistory, clear: doClear,
+    session: function () { return sid; },
+    sessions: function () { return refreshSessions(); },
+    use: function (id) { return useSession(id, true); },
+    newSession: newSession,
   };
 })();

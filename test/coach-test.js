@@ -115,9 +115,12 @@ const mk = function (n, role) { return { role: role || 'user', content: '内容'
 const many = [];
 for (let i = 0; i < 20; i++) many.push(mk(i, i % 2 ? 'assistant' : 'user'));
 const m1 = coach.buildMessages({ question: '训练到第几步了', history: many });
-check('历史被截到 8 条', m1.length === 1 + 8 + 1, '共 ' + m1.length + ' 条');
 check('system 在最前、本轮问题在最后',
   m1[0].role === 'system' && m1[m1.length - 1].role === 'user');
+/* 会话内的内容全传：不再按「最近 8 条、每条砍到 1200 字」裁。
+   长度改由 src/session.js 管 —— 快到窗口 75% 就先压摘要，下一轮发「摘要 + 之后的原文」，
+   只有压缩没赶上、又真装不下，才按预算丢最旧的（见 coach-session-test.js）。 */
+check('20 条历史一条不少地传上去', m1.length === 1 + 20 + 1, '共 ' + m1.length + ' 条');
 check('本轮问题单独成一条（不会和历史里的重复）',
   m1[m1.length - 1].content.indexOf('问题：训练到第几步了') >= 0,
   m1[m1.length - 1].content.slice(0, 60));
@@ -131,8 +134,14 @@ const longHist = coach.buildMessages({
   question: 'q', history: [{ role: 'assistant', content: 'x'.repeat(5000) }],
 });
 const longMsg = longHist.filter(function (m) { return m.role === 'assistant'; })[0];
-check('单条历史被截到 1200 字',
-  longMsg.content.length === coach.COACH_HISTORY_CHARS, String(longMsg.content.length));
+check('5000 字的单条原样传（不再砍到 1200 字）',
+  longMsg.content.length === 5000, String(longMsg.content.length));
+const hugeMsg = coach.buildMessages({
+  question: 'q', history: [{ role: 'user', content: 'y'.repeat(20000) }],
+})[1];
+check('单条长到离谱时才裁（一条把整个窗口吃掉就没得聊了）',
+  hugeMsg.content.length < 20000 && hugeMsg.content.length <= coach.COACH_MSG_MAX_CHARS + 24,
+  String(hugeMsg.content.length));
 
 console.log('\n=== 看板上下文注入 ===');
 const mCtx = coach.buildMessages({
@@ -220,9 +229,18 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
   let streamDelay = 0;    // 让流「慢」一点，好在生成途中检查按钮状态
   let restoreMsgs = [];   // GET api/coach/history 返回什么（模拟「上次没聊完的对话」）
   let clearCalls = 0;     // 调了几次 api/coach/clear
+  let created = 0;        // 开了几段新会话
+  /* 会话列表：先给一段现成的，前端应当回到这一段（而不是每次刷新都开新的） */
+  let sessList = [
+    { sid: 's1', title: '熵的问题', created: 1, updated: 2, msgs: 2, summary: '', compressCnt: 0 },
+  ];
   /* 一行一个 JSON —— NDJSON 的硬性约定。两条 delta 必须各自成行，
      挤在一行里 JSON.parse 会失败，前端会整行丢掉（第一版就是这么翻车的）。 */
   const ND = [
+    /* 上下文水位：后端每轮开头推一条，前端拿它显示百分比。
+       压缩是后端悄悄做的，用户得看见才知道「更早的对话被压成摘要了」。 */
+    '{"context":{"sid":"s1","used":12000,"window":32768,"pct":37,"trigger":24576,' +
+      '"ratio":0.75,"compressed":1,"justCompressed":false,"dropped":0,"msgs":2,"summary":true}}',
     '{"think":"先看训练到第几步了","phase":"tool","round":1}',
     '{"tool":{"name":"run_status","args":{},"summary":"pro 第30步","round":1}}',
     '{"think":"拿到数据了，组织回答","phase":"main","round":0}',
@@ -247,9 +265,22 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
         JSON.stringify({ enabled: true, ok: true, model: 'mock-model' }),
         { status: 200, headers: { 'content-type': 'application/json' } }));
     }
-    if (/\/api\/coach\/history$/.test(url)) {
+    if (/\/api\/coach\/history(\?|$)/.test(url)) {
       return Promise.resolve(new Response(
-        JSON.stringify({ ok: true, msgs: restoreMsgs }),
+        JSON.stringify({ ok: true, sid: (url.match(/sid=([^&]*)/) || [, 's1'])[1], msgs: restoreMsgs }),
+        { status: 200, headers: { 'content-type': 'application/json' } }));
+    }
+    if (/\/api\/coach\/sessions$/.test(url)) {
+      return Promise.resolve(new Response(
+        JSON.stringify({ ok: true, sessions: sessList }),
+        { status: 200, headers: { 'content-type': 'application/json' } }));
+    }
+    if (/\/api\/coach\/session$/.test(url) && method === 'POST') {
+      created++;
+      const s = { sid: 's-new-' + created, title: '', created: 0, updated: 0, msgs: 0 };
+      sessList = [s].concat(sessList);
+      return Promise.resolve(new Response(
+        JSON.stringify({ ok: true, session: s }),
         { status: 200, headers: { 'content-type': 'application/json' } }));
     }
     if (/\/api\/coach\/clear$/.test(url) && method === 'POST') {
@@ -469,6 +500,36 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
   const p5 = pkgs[pkgs.length - 1];
   check('清空后接着聊：history 从零开始', p5.history.length === 0,
     JSON.stringify(p5.history.map(function (m) { return m.role; })));
+
+  console.log('\n=== 前端：会话（一段对话一个 sid） ===');
+  check('下拉里列出了已有的会话', qa('#coach-sess option').length >= 1,
+    qa('#coach-sess option').length + ' 项');
+  check('默认回到上次那段（不是每次刷新都开新的）', $('coach-sess').value === 's1',
+    $('coach-sess').value);
+  check('发请求时带上 sid（后端按它取这段的上下文）',
+    pkgs[pkgs.length - 1].sid === 's1', String(pkgs[pkgs.length - 1].sid));
+  const meter = $('coach-meter');
+  check('水位条显示这一轮占窗口的百分比', meter.hidden === false && /上下文\s*37%/.test(meter.textContent),
+    meter.hidden + ' / ' + meter.textContent);
+  check('悬浮说明里讲清了压缩与摘要（压缩是悄悄做的，得让人看见）',
+    /自动压缩/.test(meter.title) && /压缩 \d+ 次/.test(meter.title), meter.title);
+
+  restoreMsgs = [{ role: 'user', content: '老会话里的提问' }];
+  click($('coach-new'));
+  await sleep(220);
+  check('点「＋新对话」会真的去开一段', created === 1 && $('coach-sess').value === 's-new-1',
+    'created=' + created + ' value=' + $('coach-sess').value);
+  check('新会话是空的：欢迎语 + 快捷问题',
+    /AI 训练教练/.test($('coach-body').textContent) && qa('.coach-chip').length >= 3,
+    qa('.coach-chip').length + ' 个快捷问题');
+  check('新会话不会接着老会话聊', M.msgs.length === 0, M.msgs.length + ' 条');
+
+  $('coach-sess').value = 's1';
+  $('coach-sess').dispatchEvent(new window.Event('change', { bubbles: true }));
+  await sleep(220);
+  check('切回老会话会把它的对话取回来', /老会话里的提问/.test($('coach-body').textContent),
+    $('coach-body').textContent.slice(-40));
+  check('切回来后 sid 也跟着变（接着在老会话里聊）', M.session() === 's1', M.session());
 
   console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
   try { dom.window.close(); } catch (e) {}

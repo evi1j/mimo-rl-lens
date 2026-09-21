@@ -347,9 +347,21 @@
       if (!txt && !v.err && v.thinkText) txt = String(v.thinkText).replace(/^[\s　]+/, "");
 
       if (v.err) {
-        v.out.className = "coach-out is-err";
-        v.out.hidden = false;
-        v.out.textContent = v.err;
+        /* 即使后端报错了，如果思考过程里已经有内容，就把思考呈现出来，
+           而不是只给一个空白/红框。很多情况下模型其实已经想明白了，
+           只是正文输出没达到成稿门槛（比如简单的是非问只有十几字）。 */
+        if (!txt && v.thinkText) txt = String(v.thinkText).replace(/^[\s　]+/, "");
+        if (txt) {
+          v.out.className = "coach-out";
+          v.out.hidden = false;
+          v.out.innerHTML = rich(txt);
+          var errNote = el("div", "coach-warn", "（模型未按预期格式完成，以上是它的思考过程）");
+          v.out.parentNode.insertBefore(errNote, v.out.nextSibling);
+        } else {
+          v.out.className = "coach-out is-err";
+          v.out.hidden = false;
+          v.out.textContent = v.err;
+        }
       } else if (txt) {
         if (v.truncated) {
           var w = el("div", "coach-warn", "这段在生成过程中断，可能不完整，可以再问一次让它接着说");
@@ -362,7 +374,10 @@
         v.out.hidden = true;
       }
       refreshCtx();
-      toBottom(body());
+      /* 生成结束时只在用户本来就贴着底部时才自动跟到底；
+         如果用户正在翻看上面的历史，别强行把他拉下来。 */
+      var box = body();
+      if (nearBottom(box)) toBottom(box);
     }
 
     fetch("api/coach", {

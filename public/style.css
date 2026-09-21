@@ -832,7 +832,10 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
 }
 .coach-ctx-t { color: var(--dim-2); }
 
-.coach-body { flex: 1; overflow-y: auto; padding: 16px 18px 8px; scrollbar-width: thin; }
+.coach-body {
+  flex: 1; overflow-y: auto; min-height: 0; scrollbar-width: thin;
+  padding: 16px 18px 110px;   /* 底部留足空间，避免最后一条消息贴输入框太近、甚至感觉被遮住 */
+}
 
 .coach-msg { margin: 0 0 18px; }
 .coach-msg-me { display: flex; justify-content: flex-end; }

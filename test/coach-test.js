@@ -41,11 +41,14 @@ check('要求先查数据再回答（数据类问题）', /就先查数据再回
 check('概念题可以不查（auto 的提示词侧配合）', /纯概念问题/.test(S));
 check('要求术语照用并当场解释', /术语照用/.test(S) && /当场解释/.test(S));
 check('禁止生活比喻代替解释', /禁止用/.test(S) && /比喻/.test(S));
-check('给出排版约定，且排除了代码块', /空行分段/.test(S) && /不要用代码块/.test(S));
+check('给出排版约定，包含空行分段与列表',
+  /空行分段/.test(S) && /行首「- 」做列表项/.test(S));
 check('排版约定放开了表格，并规定「首尾竖线 + 表头下一行分隔行」的写法',
   /\| --- \| --- \|/.test(S) && /首尾都要竖线/.test(S) && /列控制在 4 列以内/.test(S));
-check('表格之外的结构仍然禁用（一级标题 / 代码块）',
-  /不要用 # 一级标题/.test(S) && /不要用代码块/.test(S));
+check('排版约定允许代码块，并规定 ``` 必须单独成行',
+  /```bash/.test(S) && /开头和结尾的 ``` 必须单独成行/.test(S));
+check('表格之外的结构仍然禁用（一级标题 / 其他 markdown）',
+  /不要用 # 一级标题/.test(S) && /除上面几条规则外，不要用其他 markdown 结构/.test(S));
 check('多轮：要求不重复已说过的内容', /不要重复已经说过的内容/.test(S));
 check('说明边界（看不到训练代码）', /看不到训练代码/.test(S));
 check('明确禁止在正文里写工具调用标签（写了会被剥掉，等于白写）',
@@ -197,7 +200,10 @@ check('教练的成稿门槛比讲解低（一句话回答也算答成了）',
        —— 以竖线开头但下一行不是分隔行 → 只能当段落（识别要两道条件齐全）；
        —— 真表格里故意让一行缺列（| 熵 | 1.02 |），验证按表头列数补齐。 */
     '{"delta":"| 这行以竖线开头，但下一行不是分隔行\\n\\n### 两个 run 的对照\\n\\n| 指标 | pro | flash |\\n| --- | --- | --- |\\n| **avg@n** | 0.62 | `0.58` |\\n| 熵 | 1.02 |\\n\\n"}',
-    '{"delta":"<script>alert(1)</script> 这行是用来验证转义的。"}',
+    /* 代码块：包含反引号、缩进、块内 markdown 字面量（不应被渲染），并测试 HTML 转义 */
+    '{"delta":"\\n```bash\\n# 启动 vLLM\\nvllm serve <sft_checkpoint> --tensor-parallel 8 \\\\n\\n# 启动 RL 训练\\npython train_grpo.py \\\\\\\\n  --policy <sft_checkpoint> \\\\\\\\n  --n_samples 8\\n```\\n\\n"}',
+    '{"delta":"```\\n未闭合代码块\\n  **这一行不该被加粗**\\n<script>alert(2)</script>\\n"}',
+    '{"delta":"<script>alert(1)</script> 这行是用来验证转义的，带一个 `行内码`。"}',
     '{"done":true,"model":"mock-model","toolRounds":1,"attempts":1}',
   ].join('\n') + '\n';
 
@@ -301,6 +307,31 @@ check('教练的成稿门槛比讲解低（一句话回答也算答成了）',
     out.innerHTML.indexOf('coach-ul') < out.innerHTML.indexOf('coach-tw'),
     'h=' + qa('.coach-out .coach-h').length +
     ' ul@' + out.innerHTML.indexOf('coach-ul') + ' tw@' + out.innerHTML.indexOf('coach-tw'));
+
+  console.log('\n=== 前端：markdown 代码块 ===');
+  check('代码块渲染成 <pre><code>',
+    qa('.coach-out .coach-pre').length >= 1 && !!q('.coach-out .coach-pre code'),
+    'pre=' + qa('.coach-out .coach-pre').length);
+  const pre0 = qa('.coach-out .coach-pre')[0];
+  check('代码块里的换行与缩进被保留',
+    /vllm serve/.test(pre0.textContent) && /\n.*--policy/.test(pre0.textContent),
+    pre0.textContent.slice(0, 80).replace(/\n/g, '⏎'));
+  check('代码块内的 ** 不被渲染成 <b>',
+    !/\*\*/.test(pre0.textContent) && pre0.querySelectorAll('b').length === 0,
+    'pre0 b=' + pre0.querySelectorAll('b').length);
+  check('代码块里的 HTML 被转义',
+    pre0.innerHTML.indexOf('<script>') < 0);
+  check('未闭合的 ``` 不会吞掉后续正文（后续行照常排版，而不是整坨变代码块）',
+    qa('.coach-out .coach-p').some(function (p) {
+      return /这一行不该被加粗/.test(p.textContent) && p.querySelectorAll('b').length === 1;
+    }));
+  check('只有成对的那段才渲染成代码块',
+    qa('.coach-out .coach-pre').length === 1);
+  check('行内反引号走 <code>，且不在代码块内部',
+    qa('.coach-out .coach-code').length >= 1 &&
+    qa('.coach-out .coach-code').every(function (c) { return !c.closest('.coach-pre'); }),
+    'coach-code=' + qa('.coach-out .coach-code').length);
+
   check('查询决策可见：显示调了什么工具、查到什么',
     /训练进度/.test($('coach-body').textContent) && /pro 第30步/.test($('coach-body').textContent));
   check('思考过程可折叠查看', !!q('.coach-think .coach-think-b') &&

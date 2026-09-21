@@ -877,6 +877,20 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
   font-size: 12px; padding: 1px 5px; border-radius: 5px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
+/* 代码块。和 .coach-out 的 pre-wrap 不同，块内保持原格式，容器横向滚动 */
+.coach-pre {
+  margin: 0 0 9px; padding: 10px 12px; border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 8%, var(--panel-2));
+  border: 1px solid var(--border-soft);
+  overflow-x: auto; white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.6;
+}
+.coach-out .coach-pre:last-child { margin-bottom: 0; }
+.coach-pre code {
+  display: block; font-family: inherit; background: transparent; padding: 0;
+  white-space: pre; word-break: normal; color: var(--text);
+}
 /* 对比表。抽屉只有几百像素宽，列一多就横向滚，别把版心撑破 */
 .coach-tw {
   margin: 0 0 9px; max-width: 100%; overflow-x: auto;

@@ -109,6 +109,11 @@
       "</tbody></table></div>";
   }
 
+  /* 代码块：成对的三反引号，围栏单独成行。
+     块内只转义 HTML，不做 markdown 替换（块里出现的 ** 就是字面量 ** ）。
+     没找到闭合围栏时按普通文本处理，这样即使模型忘了收尾也不会把整篇正文都吃进代码块。 */
+  function isFence(l) { return /^```\s*(\S*)\s*$/.test(String(l || "")); }
+
   function rich(text) {
     var lines = String(text || "").split("\n");
     var out = [], inList = false;
@@ -116,6 +121,28 @@
     for (var i = 0; i < lines.length; i++) {
       var t = lines[i].trim();
       if (!t) { closeList(); continue; }
+
+      /* 代码块优先于所有其他排版：否则 ``` 也会被表格的 | 逻辑干扰 */
+      if (isFence(lines[i])) {
+        /* 先找闭合围栏再决定是否成立。找不到就不成立 ——
+           否则一个漏了收尾的 ``` 会把后面整篇正文都吃进等宽块里，
+           用户看到的是一坨没有排版的文字。降级成普通段落最多露出三个反引号。 */
+        var end = -1;
+        for (var k = i + 1; k < lines.length; k++) {
+          if (isFence(lines[k])) { end = k; break; }
+        }
+        if (end < 0) {
+          closeList();
+          out.push('<p class="coach-p">' + inline(t) + "</p>");
+          continue;
+        }
+        closeList();
+        out.push('<pre class="coach-pre"><code class="coach-code-block">' +
+          esc(lines.slice(i + 1, end).join("\n")) + '</code></pre>');
+        i = end;                                    // 外层 for 还要自增一次，正好落在闭合行之后
+        continue;
+      }
+
       if (isTableRow(lines[i]) && isTableSep(lines[i + 1])) {
         closeList();
         var rows = [tableCells(lines[i])];

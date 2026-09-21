@@ -18,6 +18,11 @@
   --down: #ef4444;
   --grid: #1c2434;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  /* 滚动条：系统默认那条在深色面板上是浅色/白的，在浅色主题里又几乎看不见。
+     两个主题各给一套，别让它跟着系统的白色走。 */
+  --sb-thumb: rgba(231, 237, 247, .22);
+  --sb-thumb-hot: rgba(231, 237, 247, .38);
+  --sb-size: 10px;
 }
 
 [data-theme="light"] {
@@ -33,9 +38,25 @@
   --dim-2: #8a97ad;
   --grid: #e8edf5;
   --shadow: 0 1px 2px rgba(15,23,42,.05), 0 8px 24px -14px rgba(15,23,42,.16);
+  --sb-thumb: rgba(15, 23, 42, .26);
+  --sb-thumb-hot: rgba(15, 23, 42, .45);
 }
 
 * { box-sizing: border-box; }
+
+/* 滚动条统一成跟主题走的一套。只写 webkit 的话 Firefox 还是系统默认，
+   所以 scrollbar-color 一起给（它只认两个值：滑块 + 轨道）。 */
+* { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
+::-webkit-scrollbar { width: var(--sb-size); height: var(--sb-size); }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb); border-radius: 999px;
+  /* 边框 + content-box 是为了让滑块比轨道窄一点，视觉上细一些，
+     直接改 width 会连滚动区域一起变窄。 */
+  border: 3px solid transparent; background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hot); background-clip: content-box; }
 
 html, body {
   margin: 0;
@@ -1024,18 +1045,20 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
 }
 .coach-chip:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 
-/* 输入区 */
+/* 输入区。输入框给够高度：问训练的事常常要贴一段日志或几个指标名，
+   两行高的框写不下，滚动着写又看不全自己写了什么（上限见 coach.js 的 Q_MAX）。 */
 .coach-form {
   display: flex; align-items: flex-end; gap: 8px;
   padding: 10px 18px 16px; border-top: 1px solid var(--border-soft);
 }
 .coach-q {
-  flex: 1; resize: none; min-height: 38px; max-height: 132px;
-  padding: 9px 11px; border-radius: 9px; font: inherit; font-size: 13px; line-height: 1.6;
+  flex: 1; resize: vertical; min-height: 60px; max-height: 220px;
+  padding: 10px 12px; border-radius: 9px; font: inherit; font-size: 13.5px; line-height: 1.7;
   background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
 }
 .coach-q:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .coach-q:disabled { opacity: .5; }
+.coach-q::placeholder { color: var(--dim-2); }
 .coach-go, .coach-stop {
   flex: none; padding: 9px 16px; border-radius: 9px; cursor: pointer;
   font-size: 13px; font-weight: 600; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
@@ -1047,14 +1070,11 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
   background: color-mix(in srgb, var(--down) 14%, transparent); }
 .coach-stop:hover { background: color-mix(in srgb, var(--down) 24%, transparent); }
 
-.coach-body::-webkit-scrollbar, .coach-think-b::-webkit-scrollbar,
-.coach-step-b::-webkit-scrollbar, .coach-out::-webkit-scrollbar { width: 8px; }
-.coach-body::-webkit-scrollbar-track, .coach-think-b::-webkit-scrollbar-track,
-.coach-step-b::-webkit-scrollbar-track, .coach-out::-webkit-scrollbar-track { background: transparent; }
-.coach-body::-webkit-scrollbar-thumb, .coach-think-b::-webkit-scrollbar-thumb,
-.coach-step-b::-webkit-scrollbar-thumb, .coach-out::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--dim-2) 60%, transparent); border-radius: 4px;
-}
+/* 滚动条用全局那套（见文件开头），这里只把宽度压细一点：
+   对话区的滚动条贴着右边缘，10px 在 560px 宽的抽屉里偏粗。 */
+.coach-body::-webkit-scrollbar,
+.coach-think-b::-webkit-scrollbar,
+.coach-step-b::-webkit-scrollbar { width: 8px; }
 
 @media (max-width: 620px) {
   .coach-fab { right: 14px; bottom: 14px; padding: 10px 14px; }

@@ -66,11 +66,30 @@
     return n;
   }
 
+  /* 自动跟随到底部。这里用 stick 标志，而不是「每次写完再看一眼离底部多远」——
+     后一种写法有个致命毛病：判断发生在内容已经变长之后，只要某一次增量超过阈值
+     （网络缓冲一次吐一大段很常见，工具行/思考块连着长也一样），就会被判定成
+     「用户不在底部」，从此再也不跟随，只能手动往下拉。改成写入前先看用户贴没贴底，
+     贴着就一路跟到底，直到用户自己往上翻。 */
+  var stick = true;
+
   function nearBottom(box) {
-    return !box || box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    return !box || box.scrollHeight - box.scrollTop - box.clientHeight < 160;
   }
   function toBottom(box) {
     if (box) box.scrollTop = box.scrollHeight;
+  }
+  function follow() {
+    var box = body();
+    if (box && stick) toBottom(box);
+  }
+  /* 用户自己往上翻 → 停止跟随；翻回底部附近 → 自动恢复。
+     脚本写入造成的滚动也会派发 scroll，但那时我们本来就在底部，判定结果一样。 */
+  function bindStick() {
+    var box = body();
+    if (!box || box._stickBound) return;
+    box._stickBound = true;
+    box.addEventListener("scroll", function () { stick = nearBottom(box); }, { passive: true });
   }
 
   /* ---------------- 正文渲染：先转义，再补几样最轻的排版 ----------------
@@ -190,7 +209,8 @@
     }
     wrap.appendChild(bub);
     body().appendChild(wrap);
-    toBottom(body());
+    if (role === "user") stick = true;   // 自己发的消息：一定跟到底
+    follow();
     return wrap;
   }
 
@@ -223,13 +243,13 @@
     bub.appendChild(out);
     wrap.appendChild(bub);
     body().appendChild(wrap);
-    toBottom(body());
+    follow();
 
     return {
       wrap: wrap, status: status, steps: steps, think: think,
       thinkTitle: tt, thinkBox: tbox, out: out,
       acc: "", thinkText: "", err: "", model: "", started: false,
-      stepsMap: {}, cur: null, pend: null, tools: 0, truncated: false,
+      stepsMap: {}, cur: null, tools: 0, truncated: false,
     };
   }
 
@@ -238,14 +258,15 @@
   function stepFor(v, n) {
     n = n || 1;
     if (v.cur && v.cur.round === n) return v.cur;
-    if (v.pend && v.pend.round !== n) flushPend(v);
+    flushSteps(v);                // 上一轮想了却没真调用 → 那段收回「思考过程」
     closeStep(v);
     var s = v.stepsMap[n];
     if (!s) {
       var d = el("details", "coach-step");
       var sum = el("summary");
       sum.appendChild(el("span", "coach-spin"));
-      sum.appendChild(el("span", null, "第 " + n + " 轮查询"));
+      var tl = el("span", "coach-step-t", "正在决定查什么…");
+      sum.appendChild(tl);
       var cnt = el("span", "coach-step-c");
       sum.appendChild(cnt);
       var b = el("div", "coach-step-b");
@@ -254,34 +275,46 @@
       d.appendChild(sum);
       d.appendChild(b);
       d.appendChild(tools);
+      d.open = true;              // 进行中的那一轮默认展开，思考要看得见
       v.steps.appendChild(d);
       v.steps.hidden = false;
-      s = { round: n, el: d, box: b, tools: tools, cnt: cnt, text: "", calls: 0 };
+      s = { round: n, el: d, box: b, tools: tools, cnt: cnt, title: tl,
+            text: "", calls: 0, confirmed: false };
       v.stepsMap[n] = s;
-    }
-    if (v.pend && v.pend.round === n) {
-      s.text += v.pend.text;
-      s.box.textContent = s.text;
-      v.pend = null;
     }
     v.cur = s;
     return s;
   }
 
   function closeStep(v) {
-    if (v.cur && v.cur.el) v.cur.el.classList.remove("is-live");
+    if (v.cur && v.cur.el) {
+      v.cur.el.classList.remove("is-live");
+      v.cur.el.open = false;      // 这一轮过去了就收起来，别占着版面
+    }
   }
 
   /* 模型想了一轮却决定「不用查」时，那段思考不该占一个空块 ——
-     并进下面的「思考过程」里，它确实是在分析而不是在决策。 */
-  function flushPend(v) {
-    if (!v.pend || !v.pend.text) { v.pend = null; return; }
-    v.thinkText += (v.thinkText ? "\n\n" : "") + v.pend.text;
-    v.pend = null;
+     并进下面的「思考过程」里，它确实是在分析而不是在决策。
+     注意是「收回」而不是「不显示」：块在思考来的第一时间就建好了（要能实时看到），
+     只有最后确认这一轮没调用，才把它降级成分析过程。 */
+  function flushSteps(v) {
+    Object.keys(v.stepsMap).forEach(function (k) {
+      var s = v.stepsMap[k];
+      if (!s || s.confirmed) return;
+      if (s.text) v.thinkText += (v.thinkText ? "\n\n" : "") + s.text;
+      if (s.el && s.el.parentNode) s.el.parentNode.removeChild(s.el);
+      delete v.stepsMap[k];
+      if (v.cur === s) v.cur = null;
+    });
+    if (v.steps && !Object.keys(v.stepsMap).length) v.steps.hidden = true;
   }
 
   function addTool(v, info) {
     var s = stepFor(v, info.round || 1);
+    if (!s.confirmed) {
+      s.confirmed = true;         // 真调用了，这一轮的块留下（否则收尾时会被收回思考过程）
+      if (s.title) s.title.textContent = "第 " + s.round + " 轮查询";
+    }
     s.calls++;
     s.cnt.textContent = s.calls + " 次调用";
     s.tools.hidden = false;
@@ -342,7 +375,7 @@
       busy = false;
       ctl = null;
       setBusyUI(false);
-      flushPend(v);
+      flushSteps(v);
       closeStep(v);
       if (v.thinkBox) v.thinkBox.textContent = v.thinkText;
       if (v.thinkText) v.think.hidden = false;
@@ -387,10 +420,9 @@
         v.out.hidden = true;
       }
       refreshCtx();
-      /* 生成结束时只在用户本来就贴着底部时才自动跟到底；
-         如果用户正在翻看上面的历史，别强行把他拉下来。 */
-      var box = body();
-      if (nearBottom(box)) toBottom(box);
+      /* 收尾只把「该跟的」跟到底：用户在翻上面的历史时不把他拽下来。
+         渲染成表格/代码块会让高度跳一下，所以这里再看一次。 */
+      if (stick) toBottom(body());
     }
 
     fetch("api/coach", {
@@ -452,7 +484,7 @@
       v.acc += j.delta;
       v.out.textContent = v.acc;
       if (v.status) { v.status.hidden = false; v.status.textContent = "正在回答…"; }
-      if (nearBottom(body())) toBottom(body());
+      follow();
       return;
     }
     if (j.tool) {
@@ -463,27 +495,23 @@
       if (!v.started && v.out.classList.contains("is-wait")) {
         v.out.textContent = "教练正在查数据…";
       }
+      follow();
       return;
     }
     if (j.think) {
       if (j.phase === "tool") {
-        // 「决定查什么」的思考进本轮查询块；这一轮最后没真调用的话，
-        // 收尾时会并进「思考过程」（见 flushPend）
-        var rn = j.round || 1;
-        var ex = v.stepsMap[rn];
-        if (ex) {
-          ex.text += j.think;
-          ex.box.textContent = ex.text;
-          ex.el.classList.add("is-live");
-        } else {
-          if (!v.pend || v.pend.round !== rn) { flushPend(v); v.pend = { round: rn, text: "" }; }
-          v.pend.text += j.think;
-        }
+        /* 「决定查什么」的思考直接写进本轮查询块：块在第一个字到达时就建好，
+           所以思考是一块块往上长的 —— 等调用那一刻才整段冒出来，看着就像非流式。
+           这一轮最后没真调用的话，收尾时会把它收回「思考过程」（见 flushSteps）。 */
+        var s = stepFor(v, j.round || 1);
+        s.text += j.think;
+        s.box.textContent = s.text;
+        s.el.classList.add("is-live");
         if (!v.started) v.out.textContent = "教练正在决定查什么…";
         v.status.hidden = false;
         v.status.textContent = "正在决定查什么…";
       } else {
-        flushPend(v);
+        flushSteps(v);
         closeStep(v);
         v.thinkText += j.think;
         v.think.hidden = false;
@@ -493,11 +521,13 @@
         v.status.hidden = false;
         v.status.textContent = "正在分析…";
       }
+      follow();
       return;
     }
     if (j.notice) {
       v.status.hidden = false;
       v.status.textContent = j.notice;
+      follow();
       return;
     }
     /* 上下文水位：这一轮占窗口的百分之多少、有没有压过。
@@ -519,12 +549,14 @@
       v.started = false;
       v.acc = "";
       v.thinkText = "";
+      flushSteps(v);              // 上一轮「想了没调」的空块不留在页面上
       v.think.hidden = true;
       v.thinkBox.textContent = "";
       setThinkLive(v, false);
       v.out.hidden = false;
       v.out.className = "coach-out is-wait";
       v.out.textContent = "教练正在重新组织回答…";
+      follow();
       return;
     }
     if (j.done) {
@@ -614,6 +646,7 @@
     msgs.length = 0;
     var box = body();
     if (box) box.innerHTML = "";
+    stick = true;
     hideQuick();
     resetMeter();
     refreshClearUI();
@@ -694,6 +727,7 @@
           msgs.push({ role: isUser ? "user" : "assistant", content: txt });
         });
         refreshClearUI();
+        stick = true;             // 刚恢复的一段对话，从最新的一条看起
         toBottom(box);
       })
       .catch(function () { /* 拿不到就当没有，不影响聊天 */ })
@@ -745,6 +779,7 @@
       msgs.length = 0;
       var box = body();
       if (box) box.innerHTML = "";
+      stick = true;
       pushWho("ai", GREET_TEXT);
       renderQuick();
       refreshClearUI();
@@ -767,6 +802,8 @@
 
     d.hidden = false;
     if (m) m.hidden = false;
+    stick = true;                 // 打开抽屉先看最新的那一句
+    bindStick();
     refreshCtx();
     if (avail === null) probe();
     /* 历史是异步取回来的，那段时间里别插欢迎语 —— 否则会先插一条、
@@ -810,10 +847,14 @@
     body().appendChild(tip);
   }
 
+  /* 输入框随内容长高，到上限（和 CSS 的 max-height 对齐）才开始滚动。
+     上限给得高一些：问训练的事常常要贴一段日志或几个指标名，
+     两行高的框写不下，滚动着写又看不全自己写了什么。 */
+  var Q_MAX = 220;
   function grow(t) {
     if (!t) return;
     t.style.height = "auto";
-    t.style.height = Math.min(t.scrollHeight, 132) + "px";
+    t.style.height = Math.min(t.scrollHeight, Q_MAX) + "px";
   }
 
   var bound = false;

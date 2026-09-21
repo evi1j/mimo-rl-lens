@@ -227,6 +227,7 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
 
   let pkgs = [];          // 每次 /api/coach 的 payload
   let streamDelay = 0;    // 让流「慢」一点，好在生成途中检查按钮状态
+  let streamOnce = null;  // 下一条 /api/coach 用这段流（测特殊分支），用完即清
   let restoreMsgs = [];   // GET api/coach/history 返回什么（模拟「上次没聊完的对话」）
   let clearCalls = 0;     // 调了几次 api/coach/clear
   let created = 0;        // 开了几段新会话
@@ -294,7 +295,9 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
       try { pkgs.push(JSON.parse(opt.body)); } catch (e) { pkgs.push({ parseError: String(e) }); }
       return new Promise(function (resolve) {
         setTimeout(function () {
-          resolve(new Response(ND, {
+          const body = streamOnce || ND;
+          streamOnce = null;
+          resolve(new Response(body, {
             status: 200, headers: { 'content-type': 'application/x-ndjson' },
           }));
         }, streamDelay);
@@ -530,6 +533,60 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
   check('切回老会话会把它的对话取回来', /老会话里的提问/.test($('coach-body').textContent),
     $('coach-body').textContent.slice(-40));
   check('切回来后 sid 也跟着变（接着在老会话里聊）', M.session() === 's1', M.session());
+
+  /* 工具轮的思考必须是「一块块往上长」的。之前的写法是先把思考攒在内存里，
+     等这一轮真的发出调用才整段倒进 DOM —— 观感就是非流式（对着空白干等几秒，
+     然后一大段突然出现）。改成第一个字到达就建块。 */
+  console.log('\n=== 前端：工具轮的思考实时上屏 ===');
+  streamDelay = 0;
+  streamOnce = [
+    '{"think":"先看看 run 的状态","phase":"tool","round":1}',
+    '{"think":"再决定要不要查指标","phase":"tool","round":1}',
+    '{"tool":{"name":"run_status","args":{},"summary":"pro 第30步","round":1}}',
+    '{"think":"够了，开始写","phase":"main","round":0}',
+    '{"delta":"pro 跑到第 30 步，两个 run 都还活着。"}',
+    '{"done":true,"model":"mock-model","toolRounds":1,"attempts":1}',
+  ].join('\n') + '\n';
+  $('coach-q').value = '再看一眼状态';
+  $('coach-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(400);
+  var lastMsg = qa('.coach-msg').pop();
+  var st1 = Array.prototype.slice.call(lastMsg.querySelectorAll('.coach-step'));
+  check('工具轮一思考就有块（不等调用那一刻才整段冒出来）',
+    st1.length === 1 && /先看看 run 的状态/.test(st1[0].textContent) &&
+    /再决定要不要查指标/.test(st1[0].textContent),
+    '块数=' + st1.length + ' 文本=' + (st1[0] ? st1[0].textContent.slice(0, 40) : '无'));
+  check('真调用了，标题从「正在决定查什么」换成轮次', /第 1 轮查询/.test(st1[0].textContent),
+    st1[0].textContent.slice(0, 30));
+  var toolRow = st1[0].querySelector('.coach-tool');
+  check('工具调用记在这一轮的块里（工具名 + 查到什么）',
+    !!toolRow && !!toolRow.querySelector('.coach-tool-n') && /pro 第30步/.test(toolRow.textContent),
+    toolRow ? toolRow.textContent : '无工具行');
+  var tb = lastMsg.querySelector('.coach-think-b');
+  check('正文轮的思考另归「思考过程」，不混进查询块',
+    !!tb && /够了，开始写/.test(tb.textContent), tb ? tb.textContent.slice(0, 40) : '无');
+
+  /* 反面：想了一轮却没调用（模型决定不用查）。那段思考不该占一个空块，
+     要收进「思考过程」—— 它确实是在分析，不是在决策。 */
+  console.log('\n=== 前端：想了却没调用的那一轮不留空块 ===');
+  streamOnce = [
+    '{"think":"这个问题不用查库","phase":"tool","round":1}',
+    '{"think":"直接答就行","phase":"tool","round":1}',
+    '{"delta":"GRPO 是一种策略梯度方法，靠组内相对优势更新策略。"}',
+    '{"done":true,"model":"mock-model","toolRounds":0,"attempts":1}',
+  ].join('\n') + '\n';
+  $('coach-q').value = 'GRPO 是什么';
+  $('coach-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(400);
+  lastMsg = qa('.coach-msg').pop();
+  check('没调用的那一轮不留下查询块',
+    lastMsg.querySelectorAll('.coach-step').length === 0,
+    lastMsg.querySelectorAll('.coach-step').length + ' 个块');
+  var tb2 = lastMsg.querySelector('.coach-think-b');
+  check('那段思考并进「思考过程」，内容没丢',
+    !!tb2 && /不用查库/.test(tb2.textContent) && /直接答就行/.test(tb2.textContent),
+    tb2 ? tb2.textContent.slice(0, 50) : '无');
+  check('正文照常上屏', /策略梯度/.test(lastMsg.querySelector('.coach-out').textContent));
 
   console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
   try { dom.window.close(); } catch (e) {}

@@ -919,6 +919,12 @@ async function streamChat(cfg, messages, onDelta, onThink, opts) {
   let buf = '';
   let stop = false;
   let chars = 0; // 已吐出的正文字数：流断掉时靠它判断要不要重跑
+  /* 结束原因。上层判「答成了没有」必须知道这个：
+     stop = 模型自己收尾（写完了，哪怕只有两行）；
+     length = 撞上 max_tokens 被截断（还有话没说完，该加额度重跑）；
+     tool_calls = 又想去调工具（正文没写）。
+     只看字数会把「用户要求简短输出、模型照办写了三行」误判成失败。 */
+  let finish = '';
   try {
     for (;;) {
       const r = await reader.read();
@@ -933,7 +939,10 @@ async function streamChat(cfg, messages, onDelta, onThink, opts) {
         if (!payload || payload === '[DONE]') continue;
         let j;
         try { j = JSON.parse(payload); } catch (e) { continue; }
-        const d = j && j.choices && j.choices[0] && j.choices[0].delta;
+        const ch = j && j.choices && j.choices[0];
+        if (!ch) continue;
+        if (ch.finish_reason) finish = ch.finish_reason;
+        const d = ch.delta;
         if (!d) continue;
         const think = typeof d.reasoning_content === 'string' ? d.reasoning_content
           : (typeof d.reasoning === 'string' ? d.reasoning : '');
@@ -952,7 +961,7 @@ async function streamChat(cfg, messages, onDelta, onThink, opts) {
   } finally {
     if (stop) { try { await reader.cancel(); } catch (e) { /* ignore */ } }
   }
-  return { model: model, chars: chars, aborted: stop };
+  return { model: model, chars: chars, aborted: stop, finishReason: finish || null };
 }
 
 /* 讲解某个指标。payload 由前端组装（含该指标的固定文案与实时数值）。

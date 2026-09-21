@@ -150,6 +150,13 @@ check('第二次去掉思考强度并加额度', st1.effort === null && st1.maxT
 check('第三次再加大额度并补一句「直接给结论」', st2.maxTokens > st1.maxTokens && /直接输出/.test(st2.extra || ''));
 check('教练的成稿门槛比讲解低（一句话回答也算答成了）',
   coach.COACH_MIN_CHARS < 200, String(coach.COACH_MIN_CHARS));
+/* 用户明确要求简短输出时（「只把之前问过的问题列出来，别的别说」），
+   模型照办就会低于 60 字 —— 只按字数判会把它打成失败、重试三次甩个红框。 */
+check('自然收尾时另有一个宽容门槛，且远低于常规门槛',
+  coach.COACH_MIN_STOP_CHARS > 0 && coach.COACH_MIN_STOP_CHARS < coach.COACH_MIN_CHARS / 2,
+  coach.COACH_MIN_STOP_CHARS + ' vs ' + coach.COACH_MIN_CHARS);
+check('提示词要求：对方限定输出范围时严格照办，别自己加解释',
+  /严格照办/.test(S) && /不要自己加解释/.test(S));
 
 /* ================================================================
    二、路由：参数校验（这两种请求到不了模型）

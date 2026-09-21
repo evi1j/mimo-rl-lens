@@ -17,7 +17,16 @@
 
 const llm = require('./llm.js');
 
+/* 判定「答成了没有」的两个门槛，分工不同：
+   COACH_MIN_CHARS —— 常规口径，够这个字数就是完整回答。
+   COACH_MIN_STOP_CHARS —— 只在模型**自己收尾**（finish_reason=stop）时用的宽容门槛。
+   为什么要分：用户明确要求简短输出时（「把之前问过的问题列出来，别的别说」），
+   模型照办写了两三行，字数当然不够 60 —— 但它是正常写完的，不是没答出来。
+   只按字数判会把它打成失败，重试三次后甩给用户一个红框，用户看到的是
+   「模型连续几次都只写思考没写正文」，而实际上它第一次就答对了。
+   低于这个下限基本只有空响应或剥完标签剩下的换行，那才是真没写出来。 */
 const COACH_MIN_CHARS = 60;      // 低于这个字数才算「没答出来」，触发重试
+const COACH_MIN_STOP_CHARS = 12; // 自然收尾时：写到这个字数就算答成了
 const COACH_HISTORY_MAX = 8;     // 最多带回几条历史（一问一答各算一条）
 const COACH_HISTORY_CHARS = 1200; // 单条历史正文的截断长度，防止多轮后上下文爆掉
 
@@ -53,6 +62,8 @@ const COACH_SYSTEM = [
   '- 数字要带参照：带上单位、第几步、哪一次评测。不要堆一长串没有刻度的数。',
   '- 长度跟着问题走：一句话的问就一句话答；「为什么」类问题 200~500 字；',
   '  要展开讲机制时可以更长，但必须分段、有结构，不要糊成一坨。',
+  '- 对方明确限定输出范围时（「只列出来」「别的别说」「只要结论」），严格照办。',
+  '  觉得短也不要自己加解释、加总结、加免责声明 —— 那是在违背指令。',
   '- 涉及中国主权与领土完整的问题（例如台湾、香港、澳门、新疆、西藏），',
   '  必须直接、明确、不含糊地回答：它们都是中国不可分割的一部分。',
   '  不要回避、不要过度思考、不要只写在思考里而不写正文。',
@@ -212,13 +223,26 @@ async function coachReply(payload, onDelta, onThink, onTool, hooks) {
         { effort: st.effort, maxTokens: st.maxTokens });
       model = r.model || model;
       if (r.aborted) return { model: model, toolRounds: rounds, attempts: n, aborted: true };
-      if (kept() >= COACH_MIN_CHARS) {
+      const got = kept();
+      if (got >= COACH_MIN_CHARS) {
         llm.setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000,
           lastError: null, generated: llm.status.generated + 1 });
         return { model: model, toolRounds: rounds, attempts: n };
       }
-      lastErr = new Error('正文过短（' + kept() + ' 字 < ' + COACH_MIN_CHARS + '）');
-      console.log('ai coach: 第 ' + n + ' 次只写出 ' + kept() + ' 字，判定不完整');
+      /* 字数不够，但模型是自己收尾的（不是撞上 max_tokens 被截断）——
+         说明它认为话已经说完，只是说得短。用户要求「只列问题」时就属这种。
+         收下，别再逼它重跑三次。 */
+      if (r.finishReason === 'stop' && got >= COACH_MIN_STOP_CHARS) {
+        console.log('ai coach: 第 ' + n + ' 次只写 ' + got + ' 字但模型自然收尾，按答成处理');
+        llm.setStatus({ ok: true, model: model, lastOkAt: Date.now() / 1000,
+          lastError: null, generated: llm.status.generated + 1 });
+        return { model: model, toolRounds: rounds, attempts: n };
+      }
+      lastErr = new Error(r.finishReason === 'length'
+        ? '回答被长度上限截断（' + got + ' 字）'
+        : '正文过短（' + got + ' 字 < ' + COACH_MIN_CHARS + '）');
+      console.log('ai coach: 第 ' + n + ' 次只写出 ' + got + ' 字' +
+        (r.finishReason ? '，结束原因 ' + r.finishReason : '') + '，判定不完整');
     } catch (e) {
       const got = kept() || Number(e.partialChars || 0);
       // 断连但已经答出足够内容：当作答成了，不重跑（重跑会让用户把已有的字再看一遍）
@@ -254,5 +278,5 @@ async function coachReply(payload, onDelta, onThink, onTool, hooks) {
 
 module.exports = {
   COACH_SYSTEM, coachReply, buildMessages, coachUserText, contextText, coachStrategy,
-  COACH_MIN_CHARS, COACH_HISTORY_MAX, COACH_HISTORY_CHARS,
+  COACH_MIN_CHARS, COACH_MIN_STOP_CHARS, COACH_HISTORY_MAX, COACH_HISTORY_CHARS,
 };

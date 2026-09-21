@@ -510,7 +510,7 @@
                '<span class="m-total ' + (total > 0 ? "up" : total < 0 ? "down" : "") + '">累计 ' +
                  (total > 0 ? "+" : "") + total.toFixed(2) + "</span></div>";
       }).join("");
-      return '<div class="bench-card" data-gm="bench" title="点一下看离线评测的讲解">' +
+      return '<div class="bench-card" data-gm="bench:' + esc(b.key) + '" title="点一下看这个基准的讲解">' +
              '<div class="m-head"><span class="m-zh">' + esc(it.info.zh || b.title) + "</span>" +
              '<span class="m-key mono">' + esc(b.title) + (b.note ? " · " + esc(b.note) : "") + "</span></div>" +
              '<div class="m-vals">' + vals + "</div>" +
@@ -561,6 +561,88 @@
   };
   function toolZh(name) { return TOOL_ZH[name] || name || "查询"; }
 
+  /* ---------------- 讲解抽屉的取数：三类 key 各取各的序列 ----------------
+     key 的命名空间（讲解抽屉靠前缀判断讲的是哪一类）：
+       精选指标    dynsam/avg@n          数据在 state.series（上游 pins，常驻）
+       评测基准    bench:deepswe         数据在 state.bench（上游 benchmarks）
+       指标库指标  tag:actor/lr          数据在 state.extra（浏览指标库时按需拉取）
+     三者统一成 [{key, name, color, pts:[{x,y}]}] 这一种形状，
+     后面的统计、绘图、喂给模型都只认它。 */
+  function isBenchKey(key) { return key.indexOf("bench:") === 0; }
+  function isTagKey(key) { return key.indexOf("tag:") === 0; }
+  function bareKey(key) {
+    return isBenchKey(key) ? key.slice(6) : isTagKey(key) ? key.slice(4) : key;
+  }
+  /* 讲解对象的类别。同类之间翻页、换分页的习惯是一样的，跨类才需要重置，
+     所以判断的是它而不是具体的 key。 */
+  function glScope(key) {
+    return isBenchKey(key) ? "bench" : isTagKey(key) ? "tag" : "metric";
+  }
+
+  /* 评测基准：results 是 { run: { step: 分数 } }，一个基准里跑着多个 run */
+  function benchSeries(b) {
+    if (!b || !b.results) return [];
+    return Object.keys(b.results).map(function (k) {
+      var pts = Object.keys(b.results[k]).map(Number)
+        .sort(function (a, c) { return a - c; })
+        .map(function (s) { return { x: s, y: b.results[k][s] }; })
+        .filter(function (p) { return p.y != null && !isNaN(p.y); });
+      return { key: k, name: "mimo-v2.6-" + k, color: COLORS[k] || "#888", pts: pts };
+    }).filter(function (s) { return s.pts.length; });
+  }
+  function benchByKey(k) {
+    var list = state.bench || [];
+    for (var i = 0; i < list.length; i++) if (list[i].key === k) return list[i];
+    return null;
+  }
+
+  /* 指标库指标：state.extra[run][tag] 是数值数组，步数在 stepsOf(run) */
+  function tagSeries(name) {
+    var runs = (state.meta && state.meta.runs) || [];
+    var out = [];
+    runs.forEach(function (r) {
+      var arr = seriesAt(r.key, name);
+      if (!Array.isArray(arr)) return;
+      var steps = stepsOf(r.key) || [];
+      var pts = [];
+      for (var i = 0; i < arr.length; i++) {
+        var v = arr[i];
+        if (v == null || typeof v !== "number" || isNaN(v)) continue;
+        pts.push({ x: steps[i] != null ? steps[i] : i + 1, y: v });
+      }
+      if (pts.length) out.push({ key: r.key, name: r.label || r.key, color: COLORS[r.key] || "#8892a6", pts: pts });
+    });
+    return out;
+  }
+
+  /* 按前缀选数据源：精选指标、评测基准、指标库指标都走它 */
+  function ctxSeries(key) {
+    if (isBenchKey(key)) return benchSeries(benchByKey(bareKey(key)));
+    if (isTagKey(key)) return tagSeries(bareKey(key));
+    return metricSeries(key);
+  }
+
+  /* 指标库当前画的是哪个 run：跟着视图上的切换走，没选过就用第一个 */
+  function currentRunKey() {
+    var runs = (state.meta && state.meta.runs) || [];
+    if (!runs.length) return null;
+    if (state.compRun && runs.some(function (r) { return r.key === state.compRun; })) return state.compRun;
+    return runs[0].key;
+  }
+
+  /* 数值怎么格式化：指标库指标交给 fmtTag（它按上游规则或量级自适应） */
+  function glFmt(key, v) {
+    if (isTagKey(key)) return fmtTag(bareKey(key), v);
+    if (isBenchKey(key)) return v == null ? "--" : (+v).toFixed(2);
+    var it = GLOSSARY.items[key];
+    return fmtMetric(v, (it && it.unit) || "num");
+  }
+  /* 数值卡片右下角那行小字：说清这个数是哪来的 */
+  function glNowLabel(key) {
+    if (isBenchKey(key)) return "pro 最新一次评测";
+    return "pro 最新一步";
+  }
+
   function glStatOf(ss, runKey) {
     for (var i = 0; i < ss.length; i++) {
       if (ss[i].key !== runKey) continue;
@@ -579,7 +661,7 @@
   }
 
   function glCtx(k) {
-    var ss = metricSeries(k);
+    var ss = ctxSeries(k);
     var a = glStatOf(ss, "pro"), f = glStatOf(ss, "flash");
     if (!a.n && f.n) a = f;
     var c = {
@@ -646,6 +728,15 @@
     // 正在某个指标上吐字时切走了：收尾，把半截结果存回缓存
     if (glAiBusy && glAiBuf && glAiBuf.key !== key) glAiStop();
 
+    /* 换讲解对象时该停在哪个分页：同一类之间翻页保持原样（连着看几个指标的
+       AI 讲解是常见用法，翻一页就跳回固定讲解会很烦）；跨类则回到固定讲解 ——
+       指标库那几百个指标多半没看过，固定讲解先告诉观众「这是哪一类、名字怎么读」
+       比一个还没生成的 AI 空白页有用。 */
+    var prevKey = glCur;
+    if (prevKey && glScope(prevKey) !== glScope(key) && glTab === "ai" && !glAi[key]) {
+      glTab = "fixed";
+    }
+
     glCur = key;
     var G = GLOSSARY;
 
@@ -654,6 +745,41 @@
       $("gl-title").textContent = "这些图和数字在说什么";
       $("gl-sub").textContent = "";
       body.innerHTML = renderGlossaryIndex();
+      $("gl-foot").hidden = true;
+    } else if (isBenchKey(key) || isTagKey(key)) {
+      /* 评测基准与指标库指标。这两类图表的数不在 state.series 里
+         （分别在 state.bench 和 state.extra），所以固定讲解各用一个生成函数，
+         AI 讲解则由 glAiPayload 按前缀去取对应的序列。
+         没有「上一个 / 下一个」：它们不在官方的 18 项里，没有天然的相邻关系。 */
+      var bare = bareKey(key);
+      var cb = glCtx(key);
+      var fixed, kicker, title, sub;
+      if (isBenchKey(key)) {
+        var info = BENCH_INFO[bare] || {};
+        var bb = benchByKey(bare);
+        kicker = "离线评测基准";
+        title = info.zh || (bb && bb.title) || bare;
+        sub = bare;   // 副标题放上游标识（API 里查它用的名字），版本口径写在正文里
+        fixed = glBenchFixed(key, bare, cb);
+      } else {
+        var ti = G.items[bare];
+        kicker = ti ? "指标库 · 精选指标" : "指标库指标";
+        title = ti ? ti.zh : descOf(bare);
+        sub = bare;
+        fixed = ti ? glFixedHtml(bare, key, cb) : glTagFallbackHtml(bare, cb);
+        /* 指标库的数据是浏览时按需拉的。从别处（比如讲解里的相关指标按钮）
+           跳进来时可能还没有，这时补拉一次再重渲染，别让模型拿到一张空图。 */
+        if (!cb.n) {
+          var trun = currentRunKey();
+          if (trun) fetchSeries(trun, [bare]).then(function () {
+            if (glCur === key) renderGlossary(key, true);
+          }).catch(function () {});
+        }
+      }
+      $("gl-kicker").textContent = kicker;
+      $("gl-title").textContent = title;
+      $("gl-sub").textContent = sub;
+      body.innerHTML = glTabsHtml() + (glTab === "ai" ? glAiHtml(key, cb) : fixed);
       $("gl-foot").hidden = true;
     } else if (G.modules[key]) {
       var m = G.modules[key];
@@ -685,20 +811,8 @@
         $("gl-kicker").textContent = "训练指标 " + (idx + 1) + " / " + G.order.length;
         $("gl-title").textContent = it.zh;
         $("gl-sub").textContent = key;
-        var nowTxt = "";
-        try { nowTxt = it.now ? it.now(c) : ""; } catch (e) { nowTxt = ""; }
-        var bodyHtml;
-        if (glTab === "ai") {
-          bodyHtml = glAiHtml(key, c);
-        } else {
-          bodyHtml = '<div class="gl-lead">' + esc(it.one) + "</div>" +
-                     glSec("这是什么", "<p>" + esc(it.what) + "</p>") +
-                     glSec("这张图怎么看", "<p>" + esc(it.read) + "</p>") +
-                     glSec("现在的数在说什么", glNowHtml(key, c) + "<p>" + esc(nowTxt) + "</p>") +
-                     glSec("什么情况要警惕", "<p>" + esc(it.watch) + "</p>") +
-                     glLinks(it.link);
-        }
-        body.innerHTML = glTabsHtml() + bodyHtml;
+        body.innerHTML = glTabsHtml() +
+          (glTab === "ai" ? glAiHtml(key, c) : glFixedHtml(key, key, c));
         $("gl-foot").hidden = false;
         $("gl-pos").textContent = (idx + 1) + " / " + G.order.length;
         $("gl-prev").hidden = idx <= 0;
@@ -716,7 +830,9 @@
     if (d) d.hidden = true;
     if (m) m.hidden = true;
     if (glAiBusy) glAiStop(); // 抽屉都关了就别再烧 token，半截结果存进缓存
-    glCur = null;
+    /* glCur 故意不清空：它记的是「最近一次讲过的对象」。切到别的视图（点导航
+       会让抽屉先关掉）再点开新图时，要靠它判断这次是不是跨了类别 —— 跨类才把
+       分页退回固定讲解。清空的话这个判断就永远失去依据了。 */
   }
 
   /* ---------------- AI 讲解（流式吐字） ---------------- */
@@ -724,20 +840,61 @@
   /* 组装喂给 AI 的上下文：精选，不塞全量。
      固定文案当机制底稿，实时数值才是要它解读的对象。 */
   function glAiPayload(key) {
-    var it = GLOSSARY.items[key];
+    var st = state.status && state.status.pro;
+    var runInfo = {
+      step: st && st.step && st.step.last,
+      phase: st && st.step && st.step.phase,
+    };
     var c = glCtx(key);
-    var ss = metricSeries(key);
+    var bare = bareKey(key);
+    /* 最近若干步的原始值，按 run 分组。三类图表都靠这一段让模型直接看到趋势；
+       要看更长的历史，模型可以用 query_series 工具自己查。 */
     var recent = {};
-    ss.forEach(function (s) {
+    ctxSeries(key).forEach(function (s) {
       recent[s.key] = s.pts.slice(-12).map(function (p) {
         return { step: p.x, v: Math.round(p.y * 1e6) / 1e6 };
       });
     });
-    var st = state.status && state.status.pro;
-    return {
+
+    /* 评测基准：这里评的是「某个存档点在这套题上的得分」，
+       和训练指标不是一回事，所以字段名换成 score、并给出评测次数。 */
+    if (isBenchKey(key)) {
+      var info = BENCH_INFO[bare] || {};
+      var bb = benchByKey(bare);
+      var series = ctxSeries(key).map(function (s) {
+        var ys = s.pts.map(function (p) { return p.y; });
+        return {
+          run: s.key,
+          last: ys[ys.length - 1],
+          first: ys[0],
+          delta: ys.length > 1 ? ys[ys.length - 1] - ys[ys.length - 2] : null,
+          gain: ys[ys.length - 1] - ys[0],
+          min: Math.min.apply(null, ys),
+          max: Math.max.apply(null, ys),
+          evaluations: ys.length,
+          recent: s.pts.slice(-12).map(function (p) { return { step: p.x, score: p.y }; }),
+        };
+      });
+      return {
+        key: key,
+        kind: "bench",
+        zh: info.zh || (bb && bb.title) || bare,
+        title: bb && bb.title,
+        note: bb && bb.note,
+        static: { desc: info.desc || BENCH_FALLBACK_DESC },
+        series: series,
+        run: runInfo,
+      };
+    }
+
+    /* 精选指标与指标库指标走同一套字段。区别是指标库指标多半没有固定文案
+       （static 为 null），模型得自己用工具确认它存在、再查它的历史。 */
+    var it = GLOSSARY.items[bare];
+    var payload = {
       key: key,
-      zh: it ? it.zh : key,
-      unit: it ? (it.unit || "num") : "num",
+      kind: isTagKey(key) ? "tag" : "metric",
+      zh: it ? it.zh : descOf(bare),
+      unit: isTagKey(key) ? (fmtKindOf(bare) || "auto") : (it ? (it.unit || "num") : "num"),
       static: it ? { one: it.one, what: it.what, read: it.read, watch: it.watch } : null,
       live: {
         last: c.last, prev: c.prev, first: c.first,
@@ -745,24 +902,78 @@
         flash: c.flash, steps: c.n,
       },
       recent: recent,
-      run: {
-        step: st && st.step && st.step.last,
-        phase: st && st.step && st.step.phase,
-      },
+      run: runInfo,
     };
+    if (isTagKey(key)) payload.metric = bare;   // 指标库里那个真实名字，供工具检索
+    return payload;
   }
 
   /* 当前数值卡片，固定讲解页与 AI 页共用。放在 AI 页顶部是为了让读者知道
      模型看到的是哪几个数——AI 讲的内容全部出自这里。 */
   function glNowHtml(key, c) {
-    var it = GLOSSARY.items[key];
     if (!c || c.last == null) return "";
-    var kind = (it && it.unit) || "num";
     return '<div class="gl-now">' +
-             '<span class="gn-v">' + esc(fmtMetric(c.last, kind)) + "</span>" +
+             '<span class="gn-v">' + esc(glFmt(key, c.last)) + "</span>" +
              (c.delta == null ? "" : '<span class="gn-d ' + (c.delta > 0 ? "up" : c.delta < 0 ? "down" : "") + '">' +
-               (c.delta > 0 ? "+" : "") + esc(fmtMetric(c.delta, kind)) + "</span>") +
-             '<span class="gn-k">pro 最新一步</span></div>';
+               (c.delta > 0 ? "+" : "") + esc(glFmt(key, c.delta)) + "</span>") +
+             '<span class="gn-k">' + esc(glNowLabel(key)) + "</span></div>";
+  }
+
+  /* 精选指标那五段固定讲解。drawKey 是数值卡片要显示哪条序列的 key ——
+     指标库里的指标可能正好也是精选指标，那时 itemKey 与 drawKey 同源不同名。 */
+  function glFixedHtml(itemKey, drawKey, c) {
+    var it = GLOSSARY.items[itemKey];
+    if (!it) return "";
+    var nowTxt = "";
+    try { nowTxt = it.now ? it.now(c) : ""; } catch (e) { nowTxt = ""; }
+    return '<div class="gl-lead">' + esc(it.one) + "</div>" +
+           glSec("这是什么", "<p>" + esc(it.what) + "</p>") +
+           glSec("这张图怎么看", "<p>" + esc(it.read) + "</p>") +
+           glSec("现在的数在说什么", glNowHtml(drawKey, c) + "<p>" + esc(nowTxt) + "</p>") +
+           glSec("什么情况要警惕", "<p>" + esc(it.watch) + "</p>") +
+           glLinks(it.link);
+  }
+
+  /* 评测基准的固定讲解：这个基准考什么、现在各 run 跑多少、和训练指标什么关系。
+     与上面那套的区别是数据源不同（state.bench），且要强调「不参与训练」这一点。 */
+  function glBenchFixed(key, bare, c) {
+    var info = BENCH_INFO[bare] || {};
+    var bb = benchByKey(bare);
+    var ss = ctxSeries(key);
+    var rows = ss.map(function (s) {
+      var ys = s.pts.map(function (p) { return p.y; });
+      var last = ys[ys.length - 1], first = ys[0], gain = last - first;
+      return '<div class="gl-bench-row"><i class="swatch" style="background:' + s.color + '"></i>' +
+             '<span class="gbr-r">' + esc(s.name) + "</span>" +
+             '<span class="gbr-v">' + esc(glFmt(key, last)) + "</span>" +
+             '<span class="gbr-d ' + (gain > 0 ? "up" : gain < 0 ? "down" : "") + '">累计 ' +
+               (gain > 0 ? "+" : "") + esc(glFmt(key, gain)) + "</span></div>";
+    }).join("");
+    // 上游的 title / note 记着这套题的版本和口径，放在正文里，不占副标题
+    var upstream = [bb && bb.title, bb && bb.note].filter(Boolean).join(" · ") || bare;
+    return '<div class="gl-lead">' + esc(info.desc || BENCH_FALLBACK_DESC) + "</div>" +
+           glSec("目前的分数", (rows ? '<div class="gl-bench">' + rows + "</div>" : "") +
+                 "<p>横轴是训练步，但点比训练曲线稀得多：每隔若干步才拿当时的存档点跑一次这套题。" +
+                 "它不参与梯度更新，只做独立的泛化检验。</p>") +
+           glSec("和训练指标的关系", "<p>训练奖励涨、这里不动，说明模型在拟合训练分布而不是真变强；" +
+                 "两边同向才算提升落在了泛化上。不同基准涨落不同步也是正常的——" +
+                 "它们考的侧重点不一样。</p>") +
+           '<p class="dim mono" style="font-size:11.5px">上游标识：' + esc(upstream) + "</p>" +
+           '<div class="gl-links"><button class="gl-link" data-g="bench">看全部评测基准</button>' +
+           '<button class="gl-link" data-gk="dynsam/avg@n">看训练主指标</button></div>';
+  }
+
+  /* 指标库里的指标：词库没收录时，用上游描述 + 名字前缀给一段通用讲解。
+     这类指标数量最多（几百个），不可能逐个写文案，所以固定讲解只做「定位」，
+     真正逐项解读交给 AI 讲解那一页。 */
+  function glTagFallbackHtml(name, c) {
+    var fb = GLOSSARY.fallback(name);
+    return '<div class="gl-lead">' + esc(descOf(name)) + "</div>" +
+           glSec("它是哪一类", "<p>" + esc(fb.body) + "</p>") +
+           glSec("怎么读这个名字", "<p>" + esc(name) + " 可以按前缀判断类别：" +
+                 "timing 是耗时，rate/ratio 是比率，mean 是均值，" +
+                 "num/count 是数量，norm 是范数，kl 是分布差异。</p>") +
+           (c && c.last != null ? glSec("现在的数在说什么", glNowHtml("tag:" + name, c)) : "");
   }
 
   /* 分页条：把「程序写死的」和「模型生成的」分开，避免混在一起分不清来源。 */
@@ -829,7 +1040,7 @@
     if (st && st.status === "done") text = st.text;
     else if (st && st.status === "error") { text = st.err || "生成失败"; cls += " is-err"; }
     var think = st && st.think ? st.think : "";
-    var hint = st ? "" : '<p class="gl-ai-tip">模型会读取这个指标此刻的真实数据后开讲，' +
+    var hint = st ? "" : '<p class="gl-ai-tip">模型会读取这张图此刻的真实数据后开讲，' +
                          "内容跟着数据走，不是背好的固定文案。</p>";
     var stepsHtml = glStepsHtml(st);
     return '<div class="gl-ai">' +
@@ -1745,7 +1956,7 @@
         }
         if (pts.length) { last = pts[pts.length - 1].y; prev = pts.length > 1 ? pts[pts.length - 2].y : null; }
         var d = prev == null ? null : last - prev;
-        return '<div class="metric-card" data-gk="' + esc(t) + '" title="点一下看讲解">' +
+        return '<div class="metric-card" data-gk="tag:' + esc(t) + '" title="点一下看讲解">' +
                '<div class="m-head"><span class="m-zh mono">' + esc(t) + "</span></div>" +
                '<div class="m-vals"><div class="m-val"><span class="m-num">' + esc(fmtTag(t, last)) + "</span>" +
                  (d == null ? "" : '<span class="m-delta ' + (d > 0 ? "up" : d < 0 ? "down" : "") + '">' +

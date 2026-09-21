@@ -577,6 +577,15 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
 .gn-d.down { color: var(--down); }
 .gn-k { font-size: 11px; color: var(--dim-2); }
 
+/* 评测基准讲解里的「各 run 现在跑多少」：run 名 · 最新分 · 累计变化 */
+.gl-bench { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.gl-bench-row { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; }
+.gbr-r { color: var(--dim); }
+.gbr-v { font-weight: 650; font-variant-numeric: tabular-nums; }
+.gbr-d { margin-left: auto; font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--dim-2); }
+.gbr-d.up { color: var(--up); }
+.gbr-d.down { color: var(--down); }
+
 .gl-links { display: flex; flex-wrap: wrap; gap: 7px; }
 .gl-link {
   border: 1px solid var(--border-soft); background: var(--panel-2); color: var(--text);

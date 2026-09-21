@@ -128,11 +128,16 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
 
   /* ---------- 6. 点指标卡片打开 ---------- */
   console.log('\n=== 点卡片打开 ===');
+  /* 卡片网格每 10 秒被自动刷新重建一次，所以不能把节点引用攥在手里 ——
+     重建后那个节点已经脱离文档，dispatchEvent 不会再冒泡到 document，
+     表现为「点了没反应」，很容易被误判成功能坏了。每次点击前现查一次。 */
+  const cardAt = function (i) {
+    return doc.querySelectorAll('#metric-grid .metric-card[data-gk]')[i];
+  };
   const cards = doc.querySelectorAll('#metric-grid .metric-card[data-gk]');
   check('18 张指标卡片都带 data-gk', cards.length === 18, '实际 ' + cards.length);
-  const c3 = cards[2];
-  const wantKey = c3.dataset.gk;
-  click(c3);
+  const wantKey = cardAt(2).dataset.gk;
+  click(cardAt(2));
   await sleep(500);
   check('点卡片打开对应讲解',
         !drawer.hidden && (doc.getElementById('gl-sub') || {}).textContent === wantKey,
@@ -142,7 +147,7 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
   /* 抽屉已经开着时再点另一张卡片：应当直接切换过去。
      曾经遮罩是全屏可点击的，这次点击会被当成「点外面」把抽屉关掉，
      于是表现为「点了没反应、要再点一次」。 */
-  const c5 = cards[4];
+  const c5 = cardAt(4);
   const wantKey2 = c5.dataset.gk;
   click(c5);
   await sleep(500);
@@ -155,7 +160,7 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
   click(doc.querySelector('.brand h1') || doc.body);
   await sleep(300);
   check('点抽屉外空白处关闭抽屉', drawer.hidden);
-  click(c5);
+  click(cardAt(4));   // 同样现查，别用上面那个可能已过期的引用
   await sleep(400);
   check('关掉后还能再打开', !drawer.hidden);
 

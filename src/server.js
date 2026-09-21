@@ -310,7 +310,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  /* 指标讲解：POST /api/explain —— 流式吐字。
+  /* 图表讲解：POST /api/explain —— 流式吐字。
+     payload.key 有三种形态，llm 那边按 kind 字段选讲解大纲（见 explainSystem）：
+       dynsam/avg@n    精选指标
+       bench:deepswe   离线评测基准
+       tag:actor/lr    指标库里的原始指标
      响应是 NDJSON（每行一个 JSON，逐行推给前端）：
        {"think":"...", phase:"tool"|"main", round:n}  思考过程；工具轮的带 round 便于分组
        {"delta":"..."}  正文片段，前端边收边追加
@@ -338,7 +342,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (!payload || typeof payload.key !== 'string') {
-      sendJSON(res, 400, { error: '缺少指标 key' });
+      sendJSON(res, 400, { error: '缺少讲解对象的 key' });
       return;
     }
 

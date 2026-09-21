@@ -852,64 +852,134 @@ html.is-coach-resizing .coach-drawer { transition: none; }
 .coach-grip:hover::after, .coach-grip.is-live::after { background: var(--accent); }
 
 .coach-head {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
-  padding: 16px 18px 12px; border-bottom: 1px solid var(--border-soft);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 18px 10px;
 }
-.coach-kicker { font-size: 11px; color: var(--accent); font-weight: 600; letter-spacing: .02em; }
-.coach-head h3 { margin: 4px 0 0; font-size: 16px; font-weight: 650; }
-/* 「清空」是破坏性操作，所以做成两态：点一次变成「再点一次」，几秒内不理就自己复原。
-   比 confirm() 好的是它不打断操作，而且能写进测试（jsdom 里没有 confirm）。 */
-.coach-clear {
-  flex: none; border: 1px solid var(--border-soft); background: transparent;
-  color: var(--dim); font-size: 11.5px; line-height: 1; cursor: pointer;
-  padding: 5px 9px; border-radius: 999px; margin-right: 2px;
+/* 标题是「AI 训练教练」，下面那句只是说明，别抢标题的重量 */
+.coach-head-t { min-width: 0; }
+.coach-head h3 { margin: 0; font-size: 15px; font-weight: 650; }
+.coach-sub { margin-top: 2px; font-size: 11.5px; color: var(--dim); }
+/* 「清空」不在这里了（挪到下面会话行，和它管的东西放在一起）：
+   破坏性操作紧挨着「×」太容易手滑。 */
+.coach-close, .coach-sheet-x {
+  flex: none; width: 26px; height: 26px; padding: 0; border-radius: 7px;
+  border: 1px solid transparent; background: transparent; color: var(--dim);
+  font-size: 19px; line-height: 1; cursor: pointer;
 }
-.coach-clear:hover { color: var(--text); border-color: var(--border); }
-.coach-clear:disabled { opacity: .4; cursor: default; }
-.coach-clear.is-armed {
-  color: #fff; background: var(--danger, #c0392b); border-color: transparent;
-}
-.coach-close {
-  border: none; background: transparent; color: var(--dim);
-  font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px; flex: none;
-}
-.coach-close:hover { color: var(--text); }
+.coach-close:hover, .coach-sheet-x:hover { color: var(--text); background: var(--panel-2); border-color: var(--border); }
 
-/* 会话条：一段对话一个 sid。抽屉只有几百像素宽，所以切换用一个下拉，
-   不铺一列列表 —— 那会把对话区挤没。 */
-.coach-sess {
+/* 会话行：切换 / 新开 / 清空。三个控件主次分明 ——
+   下拉是主体（占满剩余宽度），「新对话」是次要操作（描边），
+   「清空」是破坏性操作（只有文字，不描边，hover 才变红）。
+   这一行不画下边框：下面那条上下文行有自己的底色，天然就是分隔。 */
+.coach-bar {
   display: flex; align-items: center; gap: 8px;
-  padding: 9px 18px; border-bottom: 1px solid var(--border-soft);
+  padding: 2px 18px 10px;
 }
+/* 当前这段对话：点它打开全部对话的列表。
+   它要显示名字，所以给它剩下的全部宽度，标题挤了就截断。 */
+.coach-now {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  padding: 6px 9px; border-radius: 9px; cursor: pointer; text-align: left;
+  font: inherit; font-size: 12px; color: var(--text);
+  border: 1px solid var(--border-soft); background: var(--panel-2);
+}
+.coach-now:hover { border-color: var(--border); }
+.coach-now[aria-expanded="true"] { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+/* 三条横线：表示「点开是个列表」，纯 CSS 画，颜色跟着 currentColor */
+.coach-now-i {
+  flex: none; width: 11px; height: 9px; position: relative; color: var(--dim);
+  border-top: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+}
+.coach-now-i::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 50%;
+  border-top: 1.5px solid currentColor;
+}
+.coach-now-t {
+  min-width: 0; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.coach-now-m { flex: none; font-size: 11px; color: var(--dim-2); white-space: nowrap; }
 .coach-new {
   flex: none; cursor: pointer; font-size: 11.5px; line-height: 1;
-  padding: 5px 10px; border-radius: 999px;
+  padding: 6px 11px; border-radius: 999px;
   border: 1px solid var(--border); background: transparent; color: var(--dim);
 }
 .coach-new:hover { color: var(--text); border-color: var(--dim-2); }
-.coach-sel {
-  flex: 1; min-width: 0; font-size: 11.5px; color: var(--text);
-  padding: 5px 6px; border-radius: 7px;
-  border: 1px solid var(--border-soft); background: var(--panel-2);
+
+/* 全部对话：盖在抽屉上的一层（抽屉内部导航），不是全屏弹窗 ——
+   开了它还能看见这是个教练抽屉。 */
+.coach-sheet {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; flex-direction: column;
+  background: var(--panel);
 }
-.coach-sel:focus { outline: none; border-color: var(--accent); }
-/* 上下文水位：后端压缩是悄悄做的，这里得让人看见 ——
-   否则用户会以为教练忘了前面聊过什么。 */
-.coach-meter {
-  flex: none; font-size: 11px; color: var(--dim-2); white-space: nowrap;
-  padding: 3px 8px; border-radius: 999px; background: var(--panel-2);
-  border: 1px solid var(--border-soft); cursor: default;
+.coach-sheet[hidden] { display: none; }
+.coach-sheet:not([hidden]) { animation: coach-sheet-in .16s ease; }
+@keyframes coach-sheet-in {
+  from { transform: translateX(14px); opacity: .35; }
+  to { transform: none; opacity: 1; }
 }
-.coach-meter.is-hot {
-  color: var(--warn, #d18b2c);
-  border-color: color-mix(in srgb, var(--warn, #d18b2c) 45%, transparent);
+.coach-sheet-h {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px 10px 18px; border-bottom: 1px solid var(--border-soft);
 }
-.coach-meter[hidden] { display: none; }
+.coach-sheet-t { font-size: 15px; font-weight: 650; }
+.coach-sheet-c { flex: 1; font-size: 11.5px; color: var(--dim); }
+.coach-sheet-l {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 10px;
+}
+.coach-sheet-e { padding: 14px 10px; font-size: 12px; color: var(--dim-2); line-height: 1.7; }
+.coach-sheet-f { padding: 10px 18px 14px; border-top: 1px solid var(--border-soft); }
+
+/* 一段对话一行：名字 + 「多少条 · 什么时候聊的」，右边是删除 */
+.coach-item { display: flex; align-items: center; gap: 2px; border-radius: 9px; }
+.coach-item:hover { background: var(--panel-2); }
+.coach-item.is-cur { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.coach-item.is-cur:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.coach-item-b {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  padding: 7px 8px; border: none; background: transparent; cursor: pointer;
+  font: inherit; text-align: left; color: inherit; border-radius: 8px;
+}
+.coach-item-t {
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.coach-item-m { font-size: 11px; color: var(--dim-2); }
+.coach-item.is-cur .coach-item-m { color: var(--accent); opacity: .85; }
+.coach-item-x {
+  flex: none; min-width: 24px; height: 24px; padding: 0 4px;
+  border: 1px solid transparent; border-radius: 7px; background: transparent;
+  color: var(--dim-2); font-size: 15px; line-height: 1; cursor: pointer;
+}
+.coach-item-x:hover { color: var(--danger, #c0392b); background: var(--panel); }
+/* 删除也是两态（和「清空」一个道理：不打断操作，且 jsdom 里能测） */
+.coach-item-x.is-armed {
+  color: #fff; background: var(--danger, #c0392b); border-color: transparent;
+  font-size: 11.5px; font-weight: 600;
+}
+.coach-item-x[hidden] { display: none; }
+
+/* 「清空」是破坏性操作，所以做成两态：点一次变成「再点一次」，几秒内不理就自己复原。
+   比 confirm() 好的是它不打断操作，而且能写进测试（jsdom 里没有 confirm）。
+   平时不描边，和上面的「新对话」拉开重量差，免得看着像一对。 */
+.coach-clear {
+  cursor: pointer; font-size: 11.5px; line-height: 1;
+  padding: 6px 11px; border-radius: 999px;
+  border: 1px solid transparent; background: transparent; color: var(--dim-2);
+}
+.coach-clear:hover { color: var(--danger, #c0392b); border-color: color-mix(in srgb, var(--danger, #c0392b) 40%, transparent); }
+.coach-clear:disabled { opacity: .35; cursor: default; }
+.coach-clear:disabled:hover { color: var(--dim-2); border-color: transparent; }
+.coach-clear.is-armed {
+  color: #fff; background: var(--danger, #c0392b); border-color: transparent;
+}
 
 /* 上下文条：「它现在知道什么」必须写在明面上，否则用户没法判断回答受没受影响 */
 .coach-ctx {
-  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
-  padding: 9px 18px; border-bottom: 1px solid var(--border-soft);
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 18px; border-bottom: 1px solid var(--border-soft);
   background: var(--panel-2); font-size: 11.5px; color: var(--dim);
 }
 .coach-ctx-sw {
@@ -922,7 +992,36 @@ html.is-coach-resizing .coach-drawer { transition: none; }
   color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: color-mix(in srgb, var(--accent) 13%, transparent);
 }
-.coach-ctx-t { color: var(--dim-2); }
+/* 这句说明会被挤（抽屉可以拖到 380px），挤了就截断，不要换行把整条撑成两行 */
+.coach-ctx-t {
+  flex: 1; min-width: 0; color: var(--dim-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 上下文水位：后端压缩是悄悄做的，这里得让人看见 ——
+   否则用户会以为教练忘了前面聊过什么。
+   原来做成一个描边的小胶囊，跟旁边的按钮一个样子，看着像能点；
+   现在改成「细进度条 + 数字」，一眼是读数不是按钮。 */
+.coach-meter {
+  flex: none; margin-left: auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--dim-2); white-space: nowrap; cursor: help;
+}
+.coach-meter[hidden] { display: none; }
+.coach-meter-bar {
+  width: 34px; height: 4px; border-radius: 999px;
+  background: var(--border); overflow: hidden;
+}
+.coach-meter-bar > i {
+  display: block; height: 100%; width: 0; border-radius: 999px;
+  background: var(--accent); opacity: .85;
+  transition: width .3s ease, background .3s ease;
+}
+.coach-meter-n { font-weight: 600; font-variant-numeric: tabular-nums; }
+.coach-meter.is-warn .coach-meter-bar > i { background: var(--warn, #d18b2c); }
+.coach-meter.is-warn { color: var(--warn, #d18b2c); }
+.coach-meter.is-hot .coach-meter-bar > i { background: var(--danger, #ef4444); }
+.coach-meter.is-hot { color: var(--danger, #ef4444); }
 
 .coach-body {
   flex: 1; overflow-y: auto; min-height: 0; scrollbar-width: thin;
@@ -1114,5 +1213,5 @@ html.is-coach-resizing .coach-drawer { transition: none; }
     display: block; position: fixed; inset: 0;
     background: rgba(15, 20, 30, .38); z-index: 70; pointer-events: none;
   }
-  .coach-body, .coach-quick, .coach-form, .coach-head, .coach-ctx { padding-left: 14px; padding-right: 14px; }
+  .coach-body, .coach-quick, .coach-form, .coach-head, .coach-bar, .coach-ctx { padding-left: 14px; padding-right: 14px; }
 }

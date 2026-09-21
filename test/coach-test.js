@@ -231,9 +231,12 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
   let restoreMsgs = [];   // GET api/coach/history 返回什么（模拟「上次没聊完的对话」）
   let clearCalls = 0;     // 调了几次 api/coach/clear
   let created = 0;        // 开了几段新会话
-  /* 会话列表：先给一段现成的，前端应当回到这一段（而不是每次刷新都开新的） */
+  let deleted = 0;        // 删了几段会话
+  /* 会话列表：先给一段现成的，前端应当回到这一段（而不是每次刷新都开新的）。
+     updated 用真实时间：列表里要显示「什么时候聊的」，时间戳得能算出相对时间。 */
   let sessList = [
-    { sid: 's1', title: '熵的问题', created: 1, updated: 2, msgs: 2, summary: '', compressCnt: 0 },
+    { sid: 's1', title: '熵的问题', created: 1, updated: Math.floor(Date.now() / 1000) - 3600,
+      msgs: 2, summary: '', compressCnt: 0 },
   ];
   /* 一行一个 JSON —— NDJSON 的硬性约定。两条 delta 必须各自成行，
      挤在一行里 JSON.parse 会失败，前端会整行丢掉（第一版就是这么翻车的）。 */
@@ -278,10 +281,18 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
     }
     if (/\/api\/coach\/session$/.test(url) && method === 'POST') {
       created++;
-      const s = { sid: 's-new-' + created, title: '', created: 0, updated: 0, msgs: 0 };
+      const s = { sid: 's-new-' + created, title: '', created: 0, updated: Math.floor(Date.now() / 1000) - 60, msgs: 0 };
       sessList = [s].concat(sessList);
       return Promise.resolve(new Response(
         JSON.stringify({ ok: true, session: s }),
+        { status: 200, headers: { 'content-type': 'application/json' } }));
+    }
+    if (/\/api\/coach\/session\/delete$/.test(url) && method === 'POST') {
+      deleted++;
+      const b = JSON.parse(opt.body);
+      sessList = sessList.filter(function (s) { return s.sid !== b.sid; });
+      return Promise.resolve(new Response(
+        JSON.stringify({ ok: true }),
         { status: 200, headers: { 'content-type': 'application/json' } }));
     }
     if (/\/api\/coach\/clear$/.test(url) && method === 'POST') {
@@ -505,34 +516,68 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
     JSON.stringify(p5.history.map(function (m) { return m.role; })));
 
   console.log('\n=== 前端：会话（一段对话一个 sid） ===');
-  check('下拉里列出了已有的会话', qa('#coach-sess option').length >= 1,
-    qa('#coach-sess option').length + ' 项');
-  check('默认回到上次那段（不是每次刷新都开新的）', $('coach-sess').value === 's1',
-    $('coach-sess').value);
+  /* 切换不是下拉，是「点开列表、一段一行」—— 下拉里塞不下一行名字之外
+     的任何信息（多少条、什么时候聊的），会话一多就没法挑。 */
+  check('列表里列出了已有的会话', qa('#coach-sheet-l .coach-item').length >= 1,
+    qa('#coach-sheet-l .coach-item').length + ' 段');
+  check('默认回到上次那段（不是每次刷新都开新的）', $('coach-now').dataset.sid === 's1',
+    $('coach-now').dataset.sid);
+  check('顶上显示的是当前这段的名字，不是「选一个」', /熵的问题/.test($('coach-now-t').textContent),
+    $('coach-now-t').textContent);
+  check('列表里标出了哪段是当前这段',
+    qa('#coach-sheet-l .coach-item.is-cur').length === 1 &&
+    qa('#coach-sheet-l .coach-item.is-cur')[0].dataset.sid === 's1');
   check('发请求时带上 sid（后端按它取这段的上下文）',
     pkgs[pkgs.length - 1].sid === 's1', String(pkgs[pkgs.length - 1].sid));
   const meter = $('coach-meter');
   check('水位条显示这一轮占窗口的百分比', meter.hidden === false && /上下文\s*37%/.test(meter.textContent),
     meter.hidden + ' / ' + meter.textContent);
+  check('水位条是一条进度条，不是一颗看着像能点的胶囊',
+    /^\d+%$/.test($('coach-meter-n').textContent) && $('coach-meter-fill').style.width === '37%',
+    $('coach-meter-n').textContent + ' / ' + $('coach-meter-fill').style.width);
   check('悬浮说明里讲清了压缩与摘要（压缩是悄悄做的，得让人看见）',
     /自动压缩/.test(meter.title) && /压缩 \d+ 次/.test(meter.title), meter.title);
 
   restoreMsgs = [{ role: 'user', content: '老会话里的提问' }];
   click($('coach-new'));
   await sleep(220);
-  check('点「＋新对话」会真的去开一段', created === 1 && $('coach-sess').value === 's-new-1',
-    'created=' + created + ' value=' + $('coach-sess').value);
+  check('点「＋新对话」会真的去开一段', created === 1 && $('coach-now').dataset.sid === 's-new-1',
+    'created=' + created + ' sid=' + $('coach-now').dataset.sid);
   check('新会话是空的：欢迎语 + 快捷问题',
     /AI 训练教练/.test($('coach-body').textContent) && qa('.coach-chip').length >= 3,
     qa('.coach-chip').length + ' 个快捷问题');
   check('新会话不会接着老会话聊', M.msgs.length === 0, M.msgs.length + ' 条');
 
-  $('coach-sess').value = 's1';
-  $('coach-sess').dispatchEvent(new window.Event('change', { bubbles: true }));
+  console.log('\n=== 前端：全部对话那一层 ===');
+  click($('coach-now'));
+  check('点当前对话名会打开「全部对话」', $('coach-sheet').hidden === false &&
+    $('coach-now').getAttribute('aria-expanded') === 'true');
+  const rows = qa('#coach-sheet-l .coach-item');
+  check('一段一行，列出全部对话', rows.length === sessList.length,
+    rows.length + ' 段 / 库里 ' + sessList.length + ' 段');
+  check('每行写着多少条、什么时候聊的',
+    /\d+ 条/.test(rows[0].textContent) && /(刚刚|分钟前|小时前|天前|月)/.test(rows[0].textContent),
+    rows[0].textContent);
+  const old = rows.filter(function (r) { return r.dataset.sid === 's1'; })[0];
+  click(old.querySelector('.coach-item-b'));
   await sleep(220);
-  check('切回老会话会把它的对话取回来', /老会话里的提问/.test($('coach-body').textContent),
-    $('coach-body').textContent.slice(-40));
-  check('切回来后 sid 也跟着变（接着在老会话里聊）', M.session() === 's1', M.session());
+  check('点列表里某段就切过去，并把它的对话取回来',
+    /老会话里的提问/.test($('coach-body').textContent), $('coach-body').textContent.slice(-40));
+  check('切完自动收起列表（不挡着对话）', $('coach-sheet').hidden === true);
+  check('切过去后 sid 也跟着变（接着在老会话里聊）', M.session() === 's1', M.session());
+
+  /* 删一段：也是两态。删的正好是当前这段时，要自动换一段接着用。 */
+  M.sheet(true);
+  const row2 = qa('#coach-sheet-l .coach-item').filter(function (r) { return r.dataset.sid === 's1'; })[0];
+  const delBtn = row2.querySelector('.coach-item-x');
+  click(delBtn);
+  check('删一段也要两态确认（点一次只是进入待确认）',
+    /删除/.test(delBtn.textContent) && deleted === 0, delBtn.textContent + ' deleted=' + deleted);
+  click(delBtn);
+  await sleep(260);
+  check('再点一次才真的删，通知后端', deleted === 1, 'deleted=' + deleted);
+  check('删掉的是当前这段时，会自动切到剩下的一段',
+    M.session() !== 's1' && M.session() !== '', M.session());
 
   /* 工具轮的思考必须是「一块块往上长」的。之前的写法是先把思考攒在内存里，
      等这一轮真的发出调用才整段倒进 DOM —— 观感就是非流式（对着空白干等几秒，

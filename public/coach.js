@@ -60,6 +60,9 @@
   var curW = 560;   // 抽屉当前宽度（px）
   var armed = false;      // 「清空」按钮是否已进入待确认状态
   var armedTimer = null;  // 待确认的自动复原计时器
+  var delArmed = "";      // 列表里哪一段正等着确认删除（空=没有）
+  var delTimer = null;
+  var CLEAR_TEXT = "清空这段对话";
 
   function $(id) { return document.getElementById(id); }
 
@@ -617,18 +620,144 @@
     try { localStorage.setItem(SID_KEY, sid || ""); } catch (e) {}
   }
 
-  function renderSessions() {
-    var sel = $("coach-sess");
-    if (!sel) return;
-    var keep = sid || sel.value;
-    sel.innerHTML = "";
+  /* 列表里一行显示「多少条 · 什么时候聊的」。精确时间戳没人看，
+     相对时间才看得出「这是刚才那段还是上周那段」。 */
+  function ago(ts) {
+    var t = Number(ts) || 0;
+    if (!t) return "";
+    var d = Date.now() / 1000 - t;
+    if (d < 60) return "刚刚";
+    if (d < 3600) return Math.floor(d / 60) + " 分钟前";
+    if (d < 86400) return Math.floor(d / 3600) + " 小时前";
+    if (d < 86400 * 30) return Math.floor(d / 86400) + " 天前";
+    var dt = new Date(t * 1000);
+    return (dt.getMonth() + 1) + " 月 " + dt.getDate() + " 日";
+  }
+
+  function sessName(s) {
+    return (s && s.title) ? String(s.title) : "新对话";
+  }
+
+  function sessMeta(s) {
+    var bits = [];
+    bits.push((s.msgs || 0) + " 条");
+    var a = ago(s.updated || s.created);
+    if (a) bits.push(a);
+    if (s.compressCnt) bits.push("已压缩 " + s.compressCnt + " 次");
+    return bits.join(" · ");
+  }
+
+  /* 当前这段：抽屉顶上那颗按钮。点它打开全部对话的列表。 */
+  function renderNow() {
+    var btn = $("coach-now");
+    if (!btn) return;
+    var cur = currentSess();
+    btn.setAttribute("data-sid", sid || "");
+    var t = $("coach-now-t"), m = $("coach-now-m");
+    if (t) t.textContent = cur ? sessName(cur) : "新对话";
+    if (m) m.textContent = cur ? sessMeta(cur) : "";
+    btn.title = cur
+      ? "当前这段：" + sessName(cur) + "（点这里看全部对话、切到别段）"
+      : "点这里看全部对话";
+  }
+
+  function renderList() {
+    var box = $("coach-sheet-l");
+    if (!box) return;
+    box.innerHTML = "";
+    if (!sessList.length) {
+      box.appendChild(el("div", "coach-sheet-e", "还没有别的对话。点上面的「＋ 新对话」开一段。"));
+      return;
+    }
     sessList.forEach(function (s) {
-      var o = el("option", null, (s.title || "未命名对话") + "（" + (s.msgs || 0) + " 条）");
-      o.value = s.sid;
-      sel.appendChild(o);
+      var isCur = s.sid === sid;
+      var row = el("div", "coach-item" + (isCur ? " is-cur" : ""));
+      row.setAttribute("data-sid", s.sid);
+      var b = el("button", "coach-item-b");
+      b.type = "button";
+      b.appendChild(el("span", "coach-item-t", sessName(s)));
+      b.appendChild(el("span", "coach-item-m", sessMeta(s) + (isCur ? " · 当前" : "")));
+      b.title = sessName(s) + "（" + sessMeta(s) + "）";
+      b.addEventListener("click", function () {
+        if (s.sid === sid) { closeSheet(); return; }
+        useSession(s.sid, true);
+        closeSheet();
+      });
+      var x = el("button", "coach-item-x", "×");
+      x.type = "button";
+      x.title = "删掉这段对话";
+      x.setAttribute("aria-label", "删掉这段对话：" + sessName(s));
+      x.addEventListener("click", function () { onDeleteClick(s.sid, x); });
+      row.appendChild(b);
+      row.appendChild(x);
+      box.appendChild(row);
     });
-    sel.value = keep;
-    if (sel.value !== keep) sel.value = ""; // 这段已经被删了，等下一次列表刷新
+    var c = $("coach-sheet-c");
+    if (c) c.textContent = "共 " + sessList.length + " 段";
+  }
+
+  function renderSessions() {
+    renderNow();
+    renderList();
+  }
+
+  /* ---------------- 全部对话那一层 ---------------- */
+  function openSheet() {
+    var sh = $("coach-sheet");
+    if (!sh) return;
+    renderList();               // 打开前刷新一次：条数、时间可能已经变了
+    sh.hidden = false;
+    var n = $("coach-now");
+    if (n) n.setAttribute("aria-expanded", "true");
+  }
+  function closeSheet() {
+    var sh = $("coach-sheet");
+    if (!sh) return;
+    sh.hidden = true;
+    var n = $("coach-now");
+    if (n) n.setAttribute("aria-expanded", "false");
+    disarmDelete();
+  }
+  function sheetOpen() {
+    var sh = $("coach-sheet");
+    return !!sh && !sh.hidden;
+  }
+
+  /* 删一段：和「清空」一样两态 —— 点一次变成「删除？」，3 秒不理自己复原。 */
+  function disarmDelete() {
+    if (delTimer) { clearTimeout(delTimer); delTimer = null; }
+    delArmed = "";
+    var all = document.querySelectorAll(".coach-item-x.is-armed");
+    for (var i = 0; i < all.length; i++) {
+      all[i].classList.remove("is-armed");
+      all[i].textContent = "×";
+    }
+  }
+
+  function onDeleteClick(id, btn) {
+    if (delArmed !== id) {
+      disarmDelete();
+      delArmed = id;
+      btn.classList.add("is-armed");
+      btn.textContent = "删除？";
+      delTimer = setTimeout(disarmDelete, 3000);
+      return;
+    }
+    disarmDelete();
+    fetch("api/coach/session/delete", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sid: id }),
+    }).catch(function () { /* 删不掉就等下次刷新列表再说 */ })
+      .then(function () {
+        if (id === sid) {           // 删的正是当前这段：换一段接着用
+          var rest = sessList.filter(function (s) { return s.sid !== id; });
+          return refreshSessions().then(function () {
+            if (rest.length) useSession(rest[0].sid, true);
+            else newSession();
+          });
+        }
+        return refreshSessions();
+      });
   }
 
   function refreshSessions() {
@@ -660,6 +789,7 @@
 
   function newSession() {
     if (busy) return;
+    closeSheet();          // 从列表里点「新对话」的话，开完就回到对话区
     fetch("api/coach/session", {
       method: "POST", headers: { "content-type": "application/json" }, body: "{}",
     }).then(function (r) { return r.json(); })
@@ -683,9 +813,17 @@
   }
 
   /* ---------------- 上下文水位条 ---------------- */
+  /* 水位显示成「细进度条 + 百分比」，不是一个能点的按钮 ——
+     原来那个描边胶囊和旁边的按钮一个样子，看着像能点。 */
   function resetMeter() {
     var m = $("coach-meter");
-    if (m) { m.hidden = true; m.textContent = ""; m.className = "coach-meter"; }
+    if (!m) return;
+    m.hidden = true;
+    m.className = "coach-meter";
+    m.title = "";
+    var f = $("coach-meter-fill"), n = $("coach-meter-n");
+    if (f) f.style.width = "0%";
+    if (n) n.textContent = "0%";
   }
 
   function setMeter(c) {
@@ -693,8 +831,11 @@
     if (!m || !c) return;
     var pct = Math.max(0, Math.min(100, Number(c.pct) || 0));
     m.hidden = false;
-    m.textContent = "上下文 " + pct + "%";
-    m.className = "coach-meter" + (pct >= 80 ? " is-hot" : "");
+    /* 60% 起变黄、80% 起变红：红线是「快到压缩线了」，黄线只是提醒 */
+    m.className = "coach-meter" + (pct >= 80 ? " is-hot" : (pct >= 60 ? " is-warn" : ""));
+    var f = $("coach-meter-fill"), n = $("coach-meter-n");
+    if (f) f.style.width = pct + "%";
+    if (n) n.textContent = pct + "%";
     var k = function (n) { return Math.round((Number(n) || 0) / 1000) + "k"; };
     var bits = ["约 " + k(c.used) + " / " + k(c.window) + " tokens"];
     if (c.summary) bits.push("更早的部分已压成摘要");
@@ -747,14 +888,14 @@
     var b = $("coach-clear");
     if (!b) return;
     b.disabled = !msgs.length;
-    if (!armed) b.textContent = "清空";
+    if (!armed) b.textContent = CLEAR_TEXT;
   }
 
   function disarmClear() {
     armed = false;
     if (armedTimer) { clearTimeout(armedTimer); armedTimer = null; }
     var b = $("coach-clear");
-    if (b) { b.classList.remove("is-armed"); b.textContent = "清空"; }
+    if (b) { b.classList.remove("is-armed"); b.textContent = CLEAR_TEXT; }
   }
 
   /* 两态确认：点一次按钮变成「再点一次」，3 秒内不再点就自己复原。
@@ -859,6 +1000,7 @@
 
     d.hidden = false;
     if (m) m.hidden = false;
+    closeSheet();   // 上次如果停在「全部对话」那一层，这次打开直接回到对话
     /* 关键的一行：给页面加右边距，让内容重排。少了它就是「盖在上面」——
        右边那列图表会被压在抽屉底下，想对着图问就得来回开关。 */
     document.documentElement.classList.add("coach-open");
@@ -880,6 +1022,7 @@
     var d = $("coach-drawer"), m = $("coach-mask");
     if (d) d.hidden = true;
     if (m) m.hidden = true;
+    closeSheet();
     document.documentElement.classList.remove("coach-open");   // 页面拿回整屏
   }
 
@@ -974,16 +1117,19 @@
     if (clr) clr.addEventListener("click", onClearClick);
     var nb = $("coach-new");
     if (nb) nb.addEventListener("click", newSession);
-    var sel = $("coach-sess");
-    if (sel) {
-      sel.addEventListener("change", function () {
-        if (busy) { renderSessions(); return; }
-        useSession(sel.value, true);
+    var nowBtn = $("coach-now");
+    if (nowBtn) {
+      nowBtn.addEventListener("click", function () {
+        if (sheetOpen()) closeSheet(); else openSheet();
       });
     }
+    var shx = $("coach-sheet-x");
+    if (shx) shx.addEventListener("click", closeSheet);
 
     document.addEventListener("keydown", function (e) {
       if (e.key !== "Escape") return;
+      // 先收「全部对话」那一层，再收整个抽屉 —— 一次 Esc 只退一层
+      if (sheetOpen()) { closeSheet(); return; }
       var d = $("coach-drawer");
       if (d && !d.hidden) closePanel();
     });
@@ -1016,6 +1162,8 @@
     sessions: function () { return refreshSessions(); },
     use: function (id) { return useSession(id, true); },
     newSession: newSession,
+    sheet: function (open) { if (open === false) closeSheet(); else openSheet(); return sheetOpen(); },
+    items: function () { return Array.prototype.slice.call(document.querySelectorAll(".coach-item")); },
     width: function () { return curW; },
     setWidth: function (px) { return setWidth(px, true); },
   };

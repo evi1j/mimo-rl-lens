@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MiMo-V2.6 · RL 实时训练看板</title>
 <meta name="description" content="mimo-v2.6-pro / flash 强化学习训练实时指标面板，数据直连小米官方 trainer 日志。">
-<link rel="stylesheet" href="style.css?v=33">
+<link rel="stylesheet" href="style.css?v=34">
 </head>
 <body>
 
@@ -280,25 +280,54 @@
        role="separator" aria-orientation="vertical" aria-label="调整抽屉宽度"></div>
 
   <div class="coach-head">
-    <div>
-      <div class="coach-kicker">AI 训练教练</div>
-      <h3>这块板的数据它都能查</h3>
+    <div class="coach-head-t">
+      <h3>AI 训练教练</h3>
+      <div class="coach-sub">这块板的数据它都能查</div>
     </div>
-    <button class="coach-clear" id="coach-clear" type="button" title="清空这段对话">清空</button>
-    <button class="coach-close" id="coach-close" type="button" title="关闭">×</button>
+    <button class="coach-close" id="coach-close" type="button" title="关闭" aria-label="关闭">×</button>
   </div>
 
-  <div class="coach-sess">
+  <!-- 会话行：左边是当前这段（点开看全部对话），右边是新开一段。
+       原来用一个下拉来切，但「一段对话」不是一个枚举值 —— 它有名字、有多少条、
+       什么时候聊的，挤在一行高的下拉里什么都看不清，会话多了也数不过来。
+       改成列表（跟常见聊天侧栏一致），一段一行。 -->
+  <div class="coach-bar">
+    <button class="coach-now" id="coach-now" type="button"
+            aria-haspopup="true" aria-expanded="false"
+            title="当前这段对话 —— 点这里看全部对话、切到别段">
+      <span class="coach-now-i" aria-hidden="true"></span>
+      <span class="coach-now-t" id="coach-now-t">新对话</span>
+      <span class="coach-now-m" id="coach-now-m"></span>
+    </button>
     <button class="coach-new" id="coach-new" type="button"
-            title="开一段新对话（当前这段留着，可以从右边切回来）">＋ 新对话</button>
-    <select class="coach-sel" id="coach-sess" aria-label="切换对话"
-            title="切换对话：每段各自记着自己的上下文"></select>
-    <span class="coach-meter" id="coach-meter" hidden></span>
+            title="开一段新对话（当前这段留着，从左边能切回来）">＋ 新对话</button>
+  </div>
+
+  <!-- 全部对话：从抽屉里滑出来的一层，不是下拉菜单。
+       「清空」也放在这里 —— 它管的是这段对话，跟会话列表是一件事，
+       放在标题行紧挨着「×」时太容易手滑。 -->
+  <div class="coach-sheet" id="coach-sheet" hidden aria-label="全部对话">
+    <div class="coach-sheet-h">
+      <span class="coach-sheet-t">全部对话</span>
+      <span class="coach-sheet-c" id="coach-sheet-c"></span>
+      <button class="coach-sheet-x" id="coach-sheet-x" type="button" title="收起" aria-label="收起">×</button>
+    </div>
+    <div class="coach-sheet-l" id="coach-sheet-l"></div>
+    <div class="coach-sheet-f">
+      <button class="coach-clear" id="coach-clear" type="button"
+              title="清空这段对话的内容（这段对话本身留着）">清空这段对话</button>
+    </div>
   </div>
 
   <div class="coach-ctx" id="coach-ctx">
     <button class="coach-ctx-sw" id="coach-ctx-sw" type="button" aria-pressed="true"></button>
     <span class="coach-ctx-t" id="coach-ctx-t"></span>
+    <!-- 水位：它不是一个按钮，所以不做成按钮的样子 —— 一条细进度条 + 数字 -->
+    <span class="coach-meter" id="coach-meter" hidden>
+      <span class="coach-meter-l">上下文</span>
+      <span class="coach-meter-bar"><i id="coach-meter-fill"></i></span>
+      <b class="coach-meter-n" id="coach-meter-n">0%</b>
+    </span>
   </div>
 
   <div class="coach-body" id="coach-body"></div>
@@ -313,9 +342,9 @@
   </form>
 </aside>
 
-<script src="glossary.js?v=33"></script>
-<script src="narrator.js?v=33"></script>
-<script src="app.js?v=33"></script>
-<script src="coach.js?v=33"></script>
+<script src="glossary.js?v=34"></script>
+<script src="narrator.js?v=34"></script>
+<script src="app.js?v=34"></script>
+<script src="coach.js?v=34"></script>
 </body>
 </html>

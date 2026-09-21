@@ -48,6 +48,8 @@
   var ctl = null;   // AbortController，用于「停止」
   var useCtx = localStorage.getItem(CTX_KEY) !== "0";
   var avail = null; // null=还没探测；true/false=AI 可用与否
+  var armed = false;      // 「清空」按钮是否已进入待确认状态
+  var armedTimer = null;  // 待确认的自动复原计时器
 
   function $(id) { return document.getElementById(id); }
 
@@ -370,6 +372,7 @@
         v.out.className = "coach-out";
         v.out.innerHTML = rich(txt);
         msgs.push({ role: "assistant", content: txt });
+        refreshClearUI();
       } else {
         v.out.hidden = true;
       }
@@ -557,6 +560,77 @@
       box.appendChild(b);
     });
   }
+  /* ---------------- 历史：刷新后接着聊 / 清空 ----------------
+     对话原本只在 msgs 里（内存），刷新就没了。现在后端落了一份，
+     这里负责取回来渲染 —— 只恢复文本：思考过程与工具调用属于「当时那次生成」，
+     重建出来只会让页面变长，而且下一轮本来就会重新查。 */
+  function loadHistory() {
+    fetch("api/coach/history", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var list = (j && Array.isArray(j.msgs)) ? j.msgs : [];
+        var box = body();
+        if (!list.length || !box) return;
+        box.appendChild(el("div", "coach-sep", "以上是上次的对话"));
+        list.forEach(function (m) {
+          var txt = String((m && m.content) || "");
+          if (!txt.trim()) return;
+          var isUser = !!(m && m.role === "user");
+          pushWho(isUser ? "user" : "ai", txt);
+          msgs.push({ role: isUser ? "user" : "assistant", content: txt });
+        });
+        refreshClearUI();
+        toBottom(box);
+      })
+      .catch(function () { /* 拿不到就当没有，不影响聊天 */ });
+  }
+
+  function refreshClearUI() {
+    var b = $("coach-clear");
+    if (!b) return;
+    b.disabled = !msgs.length;
+    if (!armed) b.textContent = "清空";
+  }
+
+  function disarmClear() {
+    armed = false;
+    if (armedTimer) { clearTimeout(armedTimer); armedTimer = null; }
+    var b = $("coach-clear");
+    if (b) { b.classList.remove("is-armed"); b.textContent = "清空"; }
+  }
+
+  /* 两态确认：点一次按钮变成「再点一次」，3 秒内不再点就自己复原。
+     用 confirm() 的话 jsdom 里根本没有它，测不了，而且会打断操作。 */
+  function onClearClick() {
+    if (!msgs.length || busy) return;
+    if (!armed) {
+      armed = true;
+      var b = $("coach-clear");
+      if (b) { b.textContent = "再点一次"; b.classList.add("is-armed"); }
+      armedTimer = setTimeout(disarmClear, 3000);
+      return;
+    }
+    disarmClear();
+    doClear();
+  }
+
+  function doClear() {
+    fetch("api/coach/clear", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    }).catch(function () {
+      /* 库清不掉也照样把界面清了：至少这次会话是干净的，
+         下次刷新会重新读库 —— 那种情况下面板上会再出现旧消息，但概率极低。 */
+    }).then(function () {
+      msgs.length = 0;
+      var box = body();
+      if (box) box.innerHTML = "";
+      pushWho("ai", GREET_TEXT);
+      renderQuick();
+      refreshClearUI();
+      toBottom(body());
+    });
+  }
+
   function hideQuick() {
     var box = $("coach-quick");
     if (box) box.hidden = true;
@@ -664,6 +738,8 @@
         if (ctl) { try { ctl.abort(); } catch (e) {} }
       });
     }
+    var clr = $("coach-clear");
+    if (clr) clr.addEventListener("click", onClearClick);
 
     document.addEventListener("keydown", function (e) {
       if (e.key !== "Escape") return;
@@ -682,6 +758,8 @@
     // 打开页面就先探一次：这样点开球的时候不会先看到一个空壳
     probe();
     refreshCtx();
+    refreshClearUI();
+    loadHistory();
   }
 
   if (document.readyState === "loading") {
@@ -690,5 +768,8 @@
     bind();
   }
 
-  window.MIMO_COACH = { send: send, open: openPanel, close: closePanel, msgs: msgs };
+  window.MIMO_COACH = {
+    send: send, open: openPanel, close: closePanel, msgs: msgs,
+    load: loadHistory, clear: doClear,
+  };
 })();

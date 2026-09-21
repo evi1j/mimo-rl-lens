@@ -141,6 +141,17 @@ function init() {
         ts               REAL NOT NULL,
         PRIMARY KEY (run, step)
       );
+
+      /* 教练对话历史。落它只有一个理由：前端的 msgs 在内存里，刷新页面就没了。
+         只存纯文本 { role, content } —— 思考过程与工具调用每轮都会重新生成，
+         存下来既占地方，又会把上一轮查到的旧数字带回下一轮。 */
+      CREATE TABLE IF NOT EXISTS coach_msg (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts      REAL NOT NULL,
+        role    TEXT NOT NULL,
+        content TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_coach_msg_id ON coach_msg(id DESC);
     `);
     // WAL 默认 1000 页才自动 checkpoint，服务常驻时容易攒到几 MB。压低一些。
     db.exec('PRAGMA wal_autocheckpoint = 256');
@@ -541,6 +552,47 @@ function searchNarrator(q, limit) {
   } catch (e) { return []; }
 }
 
+/* ---------- 教练对话历史 ----------
+   落库是为了刷新后还能接着聊。写入失败一律只警告不抛 —— 它只是「记忆」，
+   不该因为存不下就让这一轮回答失败。 */
+function saveCoachMsg(role, content) {
+  const text = String(content == null ? '' : content).trim();
+  if (!text) return false;          // 空正文（含只写思考的那轮）不进历史
+  if (!init()) return false;
+  try {
+    db.prepare('INSERT INTO coach_msg (ts, role, content) VALUES (?,?,?)')
+      .run(Date.now() / 1000, role === 'user' ? 'user' : 'assistant', text);
+    // 只留最近 200 条：对话再长也不会把库撑大，反正回传模型只用最后 8 条
+    db.prepare(
+      'DELETE FROM coach_msg WHERE id NOT IN (SELECT id FROM coach_msg ORDER BY id DESC LIMIT 200)'
+    ).run();
+    return true;
+  } catch (e) {
+    console.warn('sqlite: 教练历史落库失败', e.message);
+    return false;
+  }
+}
+
+/* 取最近 n 条，按时间升序（旧的在前）—— 前端直接顺序渲染，后端组装 messages 也要这个顺序。 */
+function coachHistory(limit) {
+  if (!init()) return [];
+  const n = Math.max(1, Math.min(Number(limit) || 50, 200));
+  try {
+    return db.prepare('SELECT role, content, ts FROM coach_msg ORDER BY id DESC LIMIT ?')
+      .all(n)
+      .reverse()
+      .map(function (r) { return { role: r.role, content: r.content, ts: r.ts }; });
+  } catch (e) {
+    console.warn('sqlite: 读取教练历史失败', e.message);
+    return [];
+  }
+}
+
+function clearCoachMsg() {
+  if (!init()) return false;
+  try { db.exec('DELETE FROM coach_msg'); return true; } catch (e) { return false; }
+}
+
 function stats() {
   if (!init()) return { enabled: false, driver: null, reason: initError };
   try {
@@ -551,6 +603,7 @@ function stats() {
     const tg = db.prepare('SELECT COUNT(*) AS c FROM tag_meta').get();
     const bc = db.prepare('SELECT COUNT(*) AS c FROM bench').get();
     const rs = db.prepare('SELECT COUNT(*) AS c FROM run_state').get();
+    const cm = db.prepare('SELECT COUNT(*) AS c FROM coach_msg').get();
     let size = 0;
     try { size = fs.statSync(DB_FILE).size; } catch (e) {}
     return {
@@ -558,7 +611,7 @@ function stats() {
       metrics: m.c, metricsFrom: m.t0, metricsTo: m.t1,
       perRun: perRun, narrator: n.c,
       series: sv.c, seriesTags: sv.tags, seriesMaxStep: sv.s1,
-      tagMeta: tg.c, bench: bc.c, runState: rs.c,
+      tagMeta: tg.c, bench: bc.c, runState: rs.c, coachMsg: cm.c,
     };
   } catch (e) {
     return { enabled: true, error: e.message };
@@ -570,6 +623,7 @@ module.exports = {
   history, toCSV, searchNarrator, stats,
   saveSeries, saveTagMeta, saveBench, saveRunState,
   querySeries, searchTags, queryBench, queryRunState, latestStep, checkpoint, unitFor,
+  saveCoachMsg, coachHistory, clearCoachMsg,
   get enabled() { return init(); },
   get driver() { return driver; },
   get reason() { return initError; },

@@ -808,6 +808,18 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
 }
 .coach-kicker { font-size: 11px; color: var(--accent); font-weight: 600; letter-spacing: .02em; }
 .coach-head h3 { margin: 4px 0 0; font-size: 16px; font-weight: 650; }
+/* 「清空」是破坏性操作，所以做成两态：点一次变成「再点一次」，几秒内不理就自己复原。
+   比 confirm() 好的是它不打断操作，而且能写进测试（jsdom 里没有 confirm）。 */
+.coach-clear {
+  flex: none; border: 1px solid var(--border-soft); background: transparent;
+  color: var(--dim); font-size: 11.5px; line-height: 1; cursor: pointer;
+  padding: 5px 9px; border-radius: 999px; margin-right: 2px;
+}
+.coach-clear:hover { color: var(--text); border-color: var(--border); }
+.coach-clear:disabled { opacity: .4; cursor: default; }
+.coach-clear.is-armed {
+  color: #fff; background: var(--danger, #c0392b); border-color: transparent;
+}
 .coach-close {
   border: none; background: transparent; color: var(--dim);
   font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px; flex: none;
@@ -960,6 +972,15 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
   margin: 9px 0; padding: 8px 11px; border-radius: 8px; font-size: 12px; line-height: 1.7;
   color: var(--flash); background: color-mix(in srgb, var(--flash) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--flash) 28%, transparent);
+}
+
+/* 恢复出来的历史与「本次新聊的」要能一眼分开，否则刷新回来分不清哪句是刚才问的 */
+.coach-sep {
+  display: flex; align-items: center; gap: 9px; margin: 12px 0 8px;
+  font-size: 11px; color: var(--dim);
+}
+.coach-sep::before, .coach-sep::after {
+  content: ""; flex: 1; height: 1px; background: var(--border-soft);
 }
 
 /* 快捷问题 */

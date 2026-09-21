@@ -382,6 +382,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* 教练对话历史：前端的 msgs 只在内存里，刷新页面就没了，所以落一份在库里。
+       GET  /api/coach/history  最近 60 条，按时间升序，前端照顺序渲染
+       POST /api/coach/clear    清空（「清空对话」按钮）
+     只有这两条走 JSON，正经对话还是上面那条 NDJSON 流。 */
+  if (p === '/api/coach/history') {
+    sendJSON(res, 200, { ok: true, msgs: store.coachHistory(60) });
+    return;
+  }
+  if (p === '/api/coach/clear') {
+    if (req.method !== 'POST') { sendJSON(res, 405, { error: '请用 POST' }); return; }
+    const ok = store.clearCoachMsg();
+    sendJSON(res, 200, { ok: ok });
+    return;
+  }
+
   /* AI 训练教练：POST /api/coach —— 与 /api/explain 同一套 NDJSON 事件协议
      （think / tool / delta / notice / restart / done / error），前端可以共用一套渲染。
      区别在 payload：
@@ -416,6 +431,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    /* 先落库再生成：这一轮问了什么，哪怕后面生成失败也应留在记录里。
+       落库失败不影响回答（store 内部只警告不抛）。 */
+    store.saveCoachMsg('user', payload.question.trim());
+
     res.writeHead(200, {
       'content-type': 'application/x-ndjson; charset=utf-8',
       'cache-control': 'no-store',
@@ -427,18 +446,24 @@ const server = http.createServer(async (req, res) => {
       if (closed) return false;
       try { res.write(JSON.stringify(obj) + '\n'); return true; } catch (e) { return false; }
     };
+    /* 正文累积在这里，收尾时落库。重跑正文轮（restart）要清零 ——
+       否则重试的那几版会叠在一起存进去。 */
+    let acc = '';
     try {
       const out = await coach.coachReply(
         payload,
-        function (t) { return sendC({ delta: t }); },
+        function (t) { acc += t; return sendC({ delta: t }); },
         function (t, phase, round) { return sendC({ think: t, phase: phase || 'main', round: round || 0 }); },
         function (info) { return sendC({ tool: info }); },
         {
           onNotice: function (msg) { return sendC({ notice: msg }); },
-          onRestart: function (info) { return sendC({ restart: info || {} }); },
+          onRestart: function (info) { acc = ''; return sendC({ restart: info || {} }); },
         });
       sendC({ done: true, model: out.model, toolRounds: out.toolRounds || 0,
               attempts: out.attempts || 1, truncated: !!out.truncated });
+      /* 只有真的写出正文才存：只写思考、正文空白的那轮不该留在历史里，
+         否则下一轮会看到一条空回答，前端的做法也是这样（见 finish()）。 */
+      store.saveCoachMsg('assistant', acc.trim());
     } catch (e) {
       console.log('ai coach 失败：' + String(e.message || e).slice(0, 200));
       sendC({ error: friendlyAiError(e) });

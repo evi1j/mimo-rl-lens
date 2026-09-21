@@ -200,6 +200,14 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
   /* ================================================================
      三、前端交互（jsdom）
      ================================================================ */
+  console.log('\n=== 对话历史：落库的读取与清空 ===');
+  const h1 = await fetch(new URL('api/coach/history', BASE), { headers: { 'x-test': '1' } });
+  const jh = await h1.json().catch(function () { return {}; });
+  check('GET /api/coach/history 返回 msgs 数组', h1.status === 200 && Array.isArray(jh.msgs),
+    h1.status + ' ' + JSON.stringify(jh).slice(0, 60));
+  const cl1 = await fetch(new URL('api/coach/clear', BASE));
+  check('清空必须走 POST（GET 是 405，避免误触就清掉整段对话）', cl1.status === 405, String(cl1.status));
+
   console.log('\n=== 前端：悬浮球与抽屉 ===');
 
   const dom = new JSDOM(html, {
@@ -210,6 +218,8 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
 
   let pkgs = [];          // 每次 /api/coach 的 payload
   let streamDelay = 0;    // 让流「慢」一点，好在生成途中检查按钮状态
+  let restoreMsgs = [];   // GET api/coach/history 返回什么（模拟「上次没聊完的对话」）
+  let clearCalls = 0;     // 调了几次 api/coach/clear
   /* 一行一个 JSON —— NDJSON 的硬性约定。两条 delta 必须各自成行，
      挤在一行里 JSON.parse 会失败，前端会整行丢掉（第一版就是这么翻车的）。 */
   const ND = [
@@ -235,6 +245,18 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
     if (/\/api\/ai\/test$/.test(url)) {
       return Promise.resolve(new Response(
         JSON.stringify({ enabled: true, ok: true, model: 'mock-model' }),
+        { status: 200, headers: { 'content-type': 'application/json' } }));
+    }
+    if (/\/api\/coach\/history$/.test(url)) {
+      return Promise.resolve(new Response(
+        JSON.stringify({ ok: true, msgs: restoreMsgs }),
+        { status: 200, headers: { 'content-type': 'application/json' } }));
+    }
+    if (/\/api\/coach\/clear$/.test(url) && method === 'POST') {
+      clearCalls++;
+      restoreMsgs = [];
+      return Promise.resolve(new Response(
+        JSON.stringify({ ok: true }),
         { status: 200, headers: { 'content-type': 'application/json' } }));
     }
     if (method === 'POST' && /\/api\/coach$/.test(url)) {
@@ -400,6 +422,53 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
   click($('coach-close'));
   await sleep(30);
   check('关闭后抽屉收起', $('coach-drawer').hidden === true);
+
+  console.log('\n=== 前端：刷新后恢复上次的对话 ===');
+  /* 库里那份历史是页面加载时（bind）取的。这里直接调 load() 模拟「刷新后重新打开」，
+     比再建一个 jsdom 轻，走的是同一条代码路径。 */
+  restoreMsgs = [
+    { role: 'user', content: '上次问的：熵现在多少' },
+    { role: 'assistant', content: '上次答的：**1.02** 左右' },
+  ];
+  const M = window.MIMO_COACH;
+  M.load();
+  await sleep(150);
+  check('恢复的历史渲染出来了',
+    /上次问的/.test($('coach-body').textContent) && /上次答的/.test($('coach-body').textContent),
+    $('coach-body').textContent.slice(-60));
+  check('有一条「以上是上次的对话」的分隔，新旧一眼能分开', !!q('.coach-sep'));
+  check('恢复的正文也走排版渲染（不是纯文本）',
+    qa('.coach-msg-ai').some(function (n) { return /上次答的/.test(n.textContent) && !!n.querySelector('b'); }));
+  check('恢复的内容进了 msgs，接着问能带上',
+    M.msgs.some(function (m) { return /上次问的/.test(m.content); }), M.msgs.length + ' 条');
+  box.value = '那现在呢？';
+  $('coach-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(400);
+  const p4 = pkgs[pkgs.length - 1];
+  check('恢复后追问：历史里带着恢复出来的那几条',
+    p4.history.some(function (m) { return /上次问的/.test(m.content); }),
+    JSON.stringify(p4.history.map(function (m) { return m.role; })));
+
+  console.log('\n=== 前端：清空对话 ===');
+  const clr = $('coach-clear');
+  check('有对话时清空按钮可用', !!clr && clr.disabled === false);
+  click(clr);
+  await sleep(40);
+  check('点一次只是进入待确认，没有真的清', /再点一次/.test(clr.textContent) && clearCalls === 0,
+    clr.textContent + ' clearCalls=' + clearCalls);
+  click(clr);
+  await sleep(300);
+  check('再点一次才真的清，且通知了后端清库', clearCalls === 1, 'clearCalls=' + clearCalls);
+  check('界面重置回欢迎语', qa('.coach-msg').length === 1 && /AI 训练教练/.test($('coach-body').textContent),
+    qa('.coach-msg').length + ' 块');
+  check('msgs 也清空了（后面的追问不会带着旧对话）', M.msgs.length === 0, M.msgs.length + ' 条');
+  check('没有对话时按钮禁用', $('coach-clear').disabled === true);
+  box.value = '清空之后还能正常问吗';
+  $('coach-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(400);
+  const p5 = pkgs[pkgs.length - 1];
+  check('清空后接着聊：history 从零开始', p5.history.length === 0,
+    JSON.stringify(p5.history.map(function (m) { return m.role; })));
 
   console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
   try { dom.window.close(); } catch (e) {}

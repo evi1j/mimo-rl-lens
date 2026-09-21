@@ -66,13 +66,47 @@
   }
 
   /* ---------------- 正文渲染：先转义，再补几样最轻的排版 ----------------
-     教练的回答会带列表与小标题，纯 pre-wrap 看着太糊。这里只认三样：
-       ### 小标题     行首「- 」列表项     **加粗**
-     全部在 esc() 之后做，所以模型输出里的 <script> 之类只会显示成字面量。 */
+     教练的回答会带列表、小标题和对比表，纯 pre-wrap 看着太糊。这里只认四样：
+       ### 小标题   行首「- 」列表项   **加粗**   markdown 表格
+     全部在 esc() 之后做，所以模型输出里的 <script> 之类只会显示成字面量。
+
+     注意：渲染只发生在收尾（finish）那一次，流式期间上屏的是纯文本。
+     表格尤其如此 —— 生成途中会看到一堆竖线，收尾才成表格。 */
   function inline(s) {
     return esc(s)
       .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
       .replace(/`([^`\n]+)`/g, '<code class="coach-code">$1</code>');
+  }
+
+  /* 表格的识别条件（两道，缺一不可）：
+       1) 这一行 trim 后以竖线开头；
+       2) 紧跟的下一行是分隔行（|---|:--:| 之类）。
+     只认第一道的话，正文里偶发的「a | b」也会被当成表格 —— 所以必须成对出现，
+     文案侧（src/coach.js）同样约定了「首尾都要竖线、表头下面必须有分隔行」。
+     列数以表头为准，多出来的截掉、缺的补空，避免参差不齐把版面撑歪。 */
+  function isTableRow(l) { return /^\s*\|/.test(l); }
+  function isTableSep(l) {
+    return /^\|\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|$/.test(String(l).trim());
+  }
+  function tableCells(l) {
+    var s = String(l).trim();
+    if (s.charAt(0) === "|") s = s.slice(1);
+    if (s.charAt(s.length - 1) === "|") s = s.slice(0, -1);
+    return s.split("|").map(function (x) { return x.trim(); });
+  }
+  function tableHtml(rows) {
+    var w = rows[0].length;
+    function tr(cs, tag) {
+      var tds = [];
+      for (var k = 0; k < w; k++) {
+        tds.push("<" + tag + ">" + inline(cs[k] || "") + "</" + tag + ">");
+      }
+      return "<tr>" + tds.join("") + "</tr>";
+    }
+    return '<div class="coach-tw"><table class="coach-table"><thead>' +
+      tr(rows[0], "th") + "</thead><tbody>" +
+      rows.slice(1).map(function (r) { return tr(r, "td"); }).join("") +
+      "</tbody></table></div>";
   }
 
   function rich(text) {
@@ -82,6 +116,15 @@
     for (var i = 0; i < lines.length; i++) {
       var t = lines[i].trim();
       if (!t) { closeList(); continue; }
+      if (isTableRow(lines[i]) && isTableSep(lines[i + 1])) {
+        closeList();
+        var rows = [tableCells(lines[i])];
+        i += 2;                                     // 跳过表头行与分隔行
+        while (i < lines.length && isTableRow(lines[i])) { rows.push(tableCells(lines[i])); i++; }
+        i--;                                        // 外层 for 还要自增一次
+        out.push(tableHtml(rows));
+        continue;
+      }
       var h = /^#{2,4}\s+(.+)$/.exec(t);
       if (h) { closeList(); out.push('<div class="coach-h">' + inline(h[1]) + "</div>"); continue; }
       var li = /^[-*·]\s+(.+)$/.exec(t);

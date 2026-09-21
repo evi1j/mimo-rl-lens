@@ -877,6 +877,24 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
   font-size: 12px; padding: 1px 5px; border-radius: 5px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
+/* 对比表。抽屉只有几百像素宽，列一多就横向滚，别把版心撑破 */
+.coach-tw {
+  margin: 0 0 9px; max-width: 100%; overflow-x: auto;
+  border: 1px solid var(--border-soft); border-radius: 8px;
+}
+.coach-out .coach-tw:last-child { margin-bottom: 0; }
+.coach-table { border-collapse: collapse; min-width: 100%; font-size: 12.5px; line-height: 1.6; }
+.coach-table th, .coach-table td {
+  padding: 6px 10px; text-align: left; vertical-align: top;
+  white-space: normal;   /* 覆盖 .coach-out 的 pre-wrap，单元格里正常折行 */
+  border-bottom: 1px solid var(--border-soft);
+}
+.coach-table th {
+  font-weight: 650; white-space: nowrap;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.coach-table tbody tr:last-child td { border-bottom: 0; }
+.coach-table .coach-code { font-size: 11.5px; }
 
 /* 查询决策：每轮一个折叠块，收起时也能看出它查了几轮、每轮调了几次 */
 .coach-steps { display: flex; flex-direction: column; margin-bottom: 8px; }

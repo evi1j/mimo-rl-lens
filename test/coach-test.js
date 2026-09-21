@@ -42,6 +42,10 @@ check('概念题可以不查（auto 的提示词侧配合）', /纯概念问题/
 check('要求术语照用并当场解释', /术语照用/.test(S) && /当场解释/.test(S));
 check('禁止生活比喻代替解释', /禁止用/.test(S) && /比喻/.test(S));
 check('给出排版约定，且排除了代码块', /空行分段/.test(S) && /不要用代码块/.test(S));
+check('排版约定放开了表格，并规定「首尾竖线 + 表头下一行分隔行」的写法',
+  /\| --- \| --- \|/.test(S) && /首尾都要竖线/.test(S) && /列控制在 4 列以内/.test(S));
+check('表格之外的结构仍然禁用（一级标题 / 代码块）',
+  /不要用 # 一级标题/.test(S) && /不要用代码块/.test(S));
 check('多轮：要求不重复已说过的内容', /不要重复已经说过的内容/.test(S));
 check('说明边界（看不到训练代码）', /看不到训练代码/.test(S));
 check('明确禁止在正文里写工具调用标签（写了会被剥掉，等于白写）',
@@ -189,6 +193,10 @@ check('教练的成稿门槛比讲解低（一句话回答也算答成了）',
     '{"think":"拿到数据了，组织回答","phase":"main","round":0}',
     '{"delta":"### 当前进度\\n\\npro 已跑到 **第 30 步**。\\n\\n"}',
     '{"delta":"- 重启 2 次\\n- 累计花费 262 万\\n\\n"}',
+    /* 表格与它的「反面样本」：
+       —— 以竖线开头但下一行不是分隔行 → 只能当段落（识别要两道条件齐全）；
+       —— 真表格里故意让一行缺列（| 熵 | 1.02 |），验证按表头列数补齐。 */
+    '{"delta":"| 这行以竖线开头，但下一行不是分隔行\\n\\n### 两个 run 的对照\\n\\n| 指标 | pro | flash |\\n| --- | --- | --- |\\n| **avg@n** | 0.62 | `0.58` |\\n| 熵 | 1.02 |\\n\\n"}',
     '{"delta":"<script>alert(1)</script> 这行是用来验证转义的。"}',
     '{"done":true,"model":"mock-model","toolRounds":1,"attempts":1}',
   ].join('\n') + '\n';
@@ -269,6 +277,30 @@ check('教练的成稿门槛比讲解低（一句话回答也算答成了）',
   check('**加粗** 被渲染成 <b>', !!q('.coach-out b'));
   check('模型返回的 <script> 被转义（不会真的执行）',
     out.innerHTML.indexOf('<script>') < 0 && out.innerHTML.indexOf('&lt;script&gt;') >= 0);
+
+  console.log('\n=== 前端：markdown 表格 ===');
+  check('渲染成真实 <table>（而不是一堆竖线文字）',
+    !!q('.coach-out .coach-table') && !!q('.coach-out .coach-tw'));
+  check('表头行与分隔行都被吃掉，正文里不残留 |---|---|',
+    out.innerHTML.indexOf('---') < 0 && out.textContent.indexOf('---') < 0,
+    (out.textContent || '').slice(0, 80));
+  check('表头进 <th>、数据进 <td>',
+    qa('.coach-table thead th').length === 3 && qa('.coach-table tbody td').length === 6,
+    'th=' + qa('.coach-table thead th').length + ' td=' + qa('.coach-table tbody td').length);
+  check('缺列的行按表头补齐（行不会参差）',
+    qa('.coach-table tbody tr').every(function (tr) { return tr.children.length === 3; }),
+    qa('.coach-table tbody tr').map(function (tr) { return tr.children.length; }).join(','));
+  check('单元格里的 **加粗** 与 `行内码` 照样生效',
+    !!q('.coach-table tbody b') && !!q('.coach-table tbody code'));
+  check('单元格里的 HTML 也被转义', q('.coach-table').innerHTML.indexOf('<script>') < 0);
+  check('只以竖线开头、没有分隔行的那行仍是段落（两道条件缺一不可）',
+    qa('.coach-out .coach-p').some(function (p) { return /这行以竖线开头/.test(p.textContent); }) &&
+    !/这行以竖线开头/.test(q('.coach-table') ? q('.coach-table').textContent : ''));
+  check('小标题 / 列表 / 表格三种块能共存，且顺序不乱',
+    qa('.coach-out .coach-h').length >= 2 && !!q('.coach-out .coach-ul') &&
+    out.innerHTML.indexOf('coach-ul') < out.innerHTML.indexOf('coach-tw'),
+    'h=' + qa('.coach-out .coach-h').length +
+    ' ul@' + out.innerHTML.indexOf('coach-ul') + ' tw@' + out.innerHTML.indexOf('coach-tw'));
   check('查询决策可见：显示调了什么工具、查到什么',
     /训练进度/.test($('coach-body').textContent) && /pro 第30步/.test($('coach-body').textContent));
   check('思考过程可折叠查看', !!q('.coach-think .coach-think-b') &&

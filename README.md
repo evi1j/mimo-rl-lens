@@ -32,6 +32,9 @@ docker compose -f docker/docker-compose.yml down        # 停掉
 然后打开 `http://<宿主机IP>:8787`。历史数据存在卷里（`board-data` → 容器的 `/app/data`），
 删容器不丢，要清空才需要 `docker volume rm`。
 
+**怎么给它配置**：镜像里不含 `config.json`，所以要么挂一份进去，要么填 compose 里的
+`LLM_*` 环境变量 —— 两种做法都写在下面「配置」那一节（不配也能跑，只是没有 AI 讲解）。
+
 不想自己构建的话，还有现成的镜像可以直接拉：
 
 ```bash

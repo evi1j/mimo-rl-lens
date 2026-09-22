@@ -42,6 +42,40 @@ AI 那几项支持环境变量，不必挂配置文件：`LLM_ENABLED=1` + `LLM_
 容器里的推理服务在宿主上时，`baseUrl` 用 `host.docker.internal`（Linux 需加
 `extra_hosts: host-gateway`，compose 文件里已注释好）。细节见 `docker/` 两个文件的注释。
 
+### 发布镜像到 GitHub（GHCR）
+
+仓库里带了 Actions 流水线 `.github/workflows/docker-publish.yml`，推到 `main` 或打
+`v*` tag 就自动构建并推到 GitHub 自带的容器仓库，同时出 amd64 与 arm64 两份：
+
+```
+ghcr.io/evi1j/mimo-rl-lens:latest   # main 分支
+ghcr.io/evi1j/mimo-rl-lens:1.7.9    # git tag v1.7.9（另有 :1.7 与 :sha-xxxxx）
+```
+
+不需要配任何密钥——流水线用每次运行临时签发的 `GITHUB_TOKEN`，靠文件里声明的
+`permissions: packages: write` 拿到推送权限。镜像可见性跟仓库走：本仓库是私有的，
+镜像也是私有的（要公开得去包设置里改，或把仓库转成 public）。
+
+拉现成镜像跑（不用自己构建）：
+
+```bash
+docker run -d --name mimo-train-live -p 8787:8787 \
+  -v mimo-data:/app/data ghcr.io/evi1j/mimo-rl-lens:latest
+```
+
+私有镜像要先登录一次，用一个有 `write:packages` 权限的 Personal Access Token：
+
+```bash
+echo <PAT> | docker login ghcr.io -u evi1j --password-stdin
+```
+
+想在本地直接推（不走 Actions）也一样，先登录再 `docker push`。多平台得用 buildx：
+
+```bash
+docker buildx build -f docker/Dockerfile --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/evi1j/mimo-rl-lens:latest --push .
+```
+
 ## 快速开始
 
 ```bash

@@ -24,14 +24,19 @@ services:
 
     environment:
       TZ: Asia/Shanghai
+      # 端口与监听地址。注意这两项会盖过 config.json 里的 server 段
+      # （环境变量优先级更高）—— 容器里要换端口，改这里的 PORT 和上面的 ports。
       PORT: "8787"
       HOST: "0.0.0.0"
 
       # ── AI（可选）──────────────────────────────────────────────
       # 全都不填也能跑：解说走内置规则引擎，看板、图表讲解、数据存档都正常。
-      # 要接自己的 OpenAI 兼容接口就把 LLM_ENABLED 改成 "1" 并填下面三项。
-      # 优先级：环境变量 > config.json，所以这里配了就不必再挂配置文件。
-      LLM_ENABLED: "0"
+      #
+      # 留空 = 不覆盖，交给挂进来的 config.json（见 volumes 那条）。
+      # 填了任何一项就以它为准：环境变量 > config.json。
+      # 坑：填 LLM_ENABLED=0 会把 config.json 里的 enabled:true 也一起关掉，
+      # 想让配置文件作主就让它空着。
+      LLM_ENABLED: ""
       LLM_BASE_URL: ""               # 例：http://host.docker.internal:8090/v1
       LLM_MODEL: ""                  # 例：qwen2.5-32b
       LLM_API_KEY: ""
@@ -41,7 +46,12 @@ services:
       # 下次启动会重建，跟本地删 data/ 一样。
       - board-data:/app/data
 
-      # 想用自己那份 config.json 覆盖端口 / AI，把下面这行的注释去掉：
+      # 想用自己那份 config.json（端口 / AI 都写在里面），去掉下面这行的注释。
+      # 前提：宿主上这个文件必须真的存在 —— 不存在的话 Docker 会把它建成目录，
+      # 挂进去应用读不到。先 cp config.example.json config.json 再来挂。
+      # 挂的是只读的；改完文件下一次 AI 调用即生效，不用重启容器。
+      # 例外：server.port / server.host 只在进程启动时读一次，而且被上面的
+      #       PORT / HOST 环境变量盖着 —— 那两个只能在启动时定，改了要重启。
       # - ../config.json:/app/config.json:ro
 
     # Linux 上要让容器访问宿主机的推理服务（host.docker.internal），再加：

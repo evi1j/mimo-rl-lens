@@ -88,7 +88,17 @@ cp config.example.json config.json    # 复制模板再填
 - `LLM_ENABLED=1` / `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` —— AI 那四项，
   Docker 里不用挂配置文件就靠它们
 
-`config.json` 含真实 API key，**不入库**（已在 `.gitignore` 里），也**不会进镜像**。
+`config.json` 含真实 API key，**不入库**（已在 `.gitignore` 里），也**不会进镜像**
+—— 镜像里刻意没有这个文件，所以 Docker 部署有两条路：
+
+- **挂载**：`docker/docker-compose.yml` 里去掉 `- ../config.json:/app/config.json:ro`
+  那行的注释（宿主上这个文件必须先存在，不存在的话 Docker 会把它建成目录）。
+  改完文件**下一次 AI 调用即生效**，不用重启容器。
+- **环境变量**：compose 里留了 `LLM_ENABLED` / `LLM_BASE_URL` / `LLM_MODEL` /
+  `LLM_API_KEY` 四个空位，填了就以它为准（会盖过配置文件）。
+
+容器里**改端口请在 compose 里改**（`ports` + `PORT` 环境变量）：`server.port` 只在进程
+启动时读一次，而容器的 `PORT` 环境变量优先级更高，会把它盖掉。
 
 ## 数据存在哪
 

@@ -238,6 +238,16 @@ config.example.json  配置模板（入库）；config.json 是本机真实配�
 构建上下文是**仓库根**（镜像要 `src/` 和 `public/`），所以构建要 `-f docker/Dockerfile`，
 compose 里是 `context: ..` + `dockerfile: docker/Dockerfile`。
 
+**容器里的配置**：镜像内没有 `config.json`（`.dockerignore` 挡掉了），两条路 ——
+挂 `-v <宿主>config.json:/app/config.json:ro`，或用 `LLM_*` 环境变量。
+优先级 `环境变量 > config.json`，且**只对非空的环境变量生效**（代码是 `if (process.env.X)`），
+所以 compose 里把四项留空就等于「交给配置文件」。踩过两个坑：
+1. compose 里写死 `LLM_ENABLED: "0"` 会把 config.json 里的 `enabled: true` 一起关掉；
+2. 镜像的 `ENV PORT=8787` 会盖过 config.json 的 `server.port`，容器里换端口只能改
+   compose 的 `ports` 与 `PORT`。
+`llm` 段是每次请求重新读文件（`loadConfig()` 里 `readFileSync`），改完下次调用即生效；
+`server` 段只在启动时读一次，改了必须重启。
+
 `.github/workflows/docker-publish.yml`：推 `main` 或打 `v*` tag 自动构建并推
 `ghcr.io/evi1j/mimo-rl-lens`（amd64 + arm64）。不用配密钥 —— 用 `GITHUB_TOKEN` + 文件里
 的 `permissions: packages: write`。**镜像当前是公开的**（匿名 token 就能拉到 manifest），

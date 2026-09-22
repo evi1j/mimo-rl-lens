@@ -1,20 +1,21 @@
 # 把镜像发布到 GitHub 自带的容器仓库（GHCR，ghcr.io）
 #
 # 触发时机：
-#   - 推到 main            → ghcr.io/evi1j/mimo-rl-lens:latest  + :main  + :sha-xxxxx
-#   - 打 tag v1.7.9        → ghcr.io/evi1j/mimo-rl-lens:1.7.9   + :1.7
-#   - Actions 页面手动点 Run workflow
+#   - 打 tag v1.8.0        → ghcr.io/evi1j/mimo-rl-lens:1.8.0 + :1.8 + :latest + :sha-xxxxx
+#   - 提 PR                → 只构建不推送（验证 Dockerfile 没写坏，不产生镜像）
+#   - Actions 页面手动点 Run workflow（用当前分支的代码，会打 latest）
+#
+# 平时推 main 不发镜像：镜像只对应「有版本号的那几个点」，免得每次提交都往
+# GHCR 里堆一份（GitHub Packages 免费额度只有 500MB）。想要最新代码就本机构建。
 #
 # 不需要任何密钥：GitHub 每次运行都会发一个临时 GITHUB_TOKEN，
 # 只要这里声明了 packages: write 就能往 ghcr.io 推。
-# 镜像的可见性跟仓库走 —— 仓库是私有的，镜像就是私有的（要公开得去
-# 包设置里手动改，或把仓库改成 public）。
 name: 发布镜像
 
 on:
   push:
-    branches: [main]
-    tags: ["v*"]
+    tags: ["v*"] # 只在打版本 tag 时发布
+  pull_request: # 只构建、不推送，用来验证 Dockerfile
   workflow_dispatch:
 
 env:
@@ -39,7 +40,9 @@ jobs:
       - name: 准备 Buildx
         uses: docker/setup-buildx-action@v3
 
+      # PR 不登录：fork 的 PR 拿不到写权限，登录了也推不动，索性跳过
       - name: 登录 ghcr.io
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -52,11 +55,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # 注意：tags 是块标量，里面不能写 # 注释（会被当成标签内容）
-          # main → latest + main；v1.7.9 → 1.7.9 + 1.7；每次构建另留一个短 sha
+          # v1.8.0 → 1.8.0 与 1.8；每次构建另留一个短 sha，方便回滚到某次提交。
+          # latest 只在「打了 tag」或「手动发布」时才动 —— 它是最新发布版，不是 main。
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
-            type=ref,event=pr
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
@@ -68,9 +70,10 @@ jobs:
           context: .
           file: ./docker/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # 用 GitHub 的构建缓存，第二次开始只重做变化的层
+          # 用 GitHub 的构建缓存，第二次开始只重做变化的层。
+          # PR 不写缓存：fork 的 PR 没有写权限，写了也只是拖慢构建。
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: ${{ github.event_name == 'pull_request' && '' || 'type=gha,mode=max' }}

@@ -32,8 +32,7 @@ docker compose -f docker/docker-compose.yml down        # 停掉
 然后打开 `http://<宿主机IP>:8787`。历史数据存在卷里（`board-data` → 容器的 `/app/data`），
 删容器不丢，要清空才需要 `docker volume rm`。
 
-镜像托管在 GitHub 的 GHCR（`ghcr.io/evi1j/mimo-rl-lens`），是**公开的**，
-直接拉就行，不用登录。
+不想自己构建的话，还有现成的镜像可以直接拉（推 `main` 时自动构建发布）：
 
 ```bash
 docker pull ghcr.io/evi1j/mimo-rl-lens:latest

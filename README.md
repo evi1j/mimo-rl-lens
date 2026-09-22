@@ -18,15 +18,20 @@
 ## 用 Docker 跑
 
 镜像零第三方依赖（存档用 Node 内置的 `node:sqlite`），`/app/data` 挂卷保存历史。
-基础镜像跟 **Node 24 LTS**（写 Dockerfile 时的 `v24.21.0`），要换版本用 build-arg：
+基础镜像用官方的 **`node:lts`** 别名，自动跟最新 LTS 线（写这段时 = Node 24），
+要换版本用 build-arg：
 
 ```bash
 docker compose -f docker/docker-compose.yml up -d --build
 docker compose -f docker/docker-compose.yml logs -f
 
-# 换 Node（24 = LTS 线，26 = Current 线；也可以锁到补丁版 24.21.0）
-docker build -f docker/Dockerfile --build-arg NODE_VERSION=26 -t mimo-train-live:latest .
+# 换 Node：lts（默认）/ latest = Current 线（现在是 26）/ 24.21.0 = 锁补丁版（最可复现）
+docker build -f docker/Dockerfile --build-arg NODE_VERSION=24.21.0 -t mimo-train-live:latest .
 ```
+
+注意 `latest` 不是「最新稳定版」而是 **Current 线**：`node:latest`、`node:current`、
+`node:26` 是同一个镜像（26.9.0，未进 LTS）；`node:lts` 和 `node:24` 才是同一个。
+不写版本就等于 `latest`，会吃到还没进 LTS 的版本。
 
 打开 `http://<宿主机IP>:8787`。构建上下文是**仓库根**（镜像要 `src/` 和 `public/`），
 所以要 `-f` 显式指定 `docker/Dockerfile`——这也是 `.dockerignore` 放在根目录的原因

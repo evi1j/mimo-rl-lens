@@ -6,11 +6,14 @@
 #     docker run -d --name mimo-train-live -p 8787:8787 -v mimo-data:/app/data mimo-train-live:latest
 # 更省事的做法是用同目录的 docker-compose.yml。
 
-# Node 版本：24 = 当前 LTS（v24.21.0，2026-09 时点），镜像跟这条线走小版本更新。
+# Node 版本：`lts` = 官方镜像的 LTS 别名，自动跟最新 LTS 线（写这行时 = v24.21.0），
+# 不用在换代时手改。注意别写成 latest —— 那个是 Current 线（现在是 26）：
+#   node:latest / node:current / node:26  → 同一个镜像（Current 线，未进 LTS）
+#   node:lts    / node:24                 → 同一个镜像（LTS 线）
 # 本机开发只要 ≥22.5 就行（内置 node:sqlite 用来存档），但镜像一律上 LTS。
-# 想换：docker build --build-arg NODE_VERSION=26 ...（26 是 Current 线），
-# 或者锁到某个补丁版：--build-arg NODE_VERSION=24.21.0
-ARG NODE_VERSION=24
+# 想换：docker build --build-arg NODE_VERSION=26 ...（Current 线），
+# 或者锁到某个补丁版（最可复现）：--build-arg NODE_VERSION=24.21.0
+ARG NODE_VERSION=lts
 FROM node:${NODE_VERSION}-bookworm-slim
 
 LABEL org.opencontainers.image.title="mimo-train-live" \

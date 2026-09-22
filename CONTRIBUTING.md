@@ -257,6 +257,11 @@ compose 里是 `context: ..` + `dockerfile: docker/Dockerfile`。
 可见性默认跟仓库走，可在包设置里改。
 坑：`docker/metadata-action` 的 `tags` 是块标量，里面写 `#` 注释会被当成标签内容。
 
+早期的镜像是按每次构建打的（`main`、`sha-xxxxx`），那些版本 GitHub 不会自动清，
+要删用 `.github/workflows/ghcr-prune.yml`（Actions 手动跑，默认 dry-run 先列清单），
+规则在 `.github/scripts/ghcr-prune.js`：只留 `latest` 和纯版本号，其余删掉。
+现在的 workflow 已经不打 sha 标签了，以后不会再堆。
+
 查镜像有没有推成功 / 是不是公开（不用登录）：
 `curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:evi1j/mimo-rl-lens:pull"` 取匿名
 token，再带 `Authorization: Bearer <token>` 去 GET `/v2/evi1j/mimo-rl-lens/manifests/latest`；

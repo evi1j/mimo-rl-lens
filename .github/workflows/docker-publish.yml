@@ -55,13 +55,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # 注意：tags 是块标量，里面不能写 # 注释（会被当成标签内容）
-          # v1.8.0 → 1.8.0 与 1.8；每次构建另留一个短 sha，方便回滚到某次提交。
-          # latest 只在「打了 tag」或「手动发布」时才动 —— 它是最新发布版，不是 main。
+          # v1.8.0 → 1.8.0 与 1.8；latest = 最新发布版（打 tag 或手动发布时才动）。
+          # 不再打 sha-xxx 标签：那等于每发一版就多堆一份镜像，GHCR 免费额度
+          # 只有 500MB。要回滚用版本号就够，实在要找某次提交就本机构建。
           tags: |
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
 
       - name: 构建并推送
         uses: docker/build-push-action@v6

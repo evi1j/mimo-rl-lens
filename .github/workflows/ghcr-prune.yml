@@ -1,0 +1,34 @@
+# 清理 GHCR 上的旧镜像版本
+#
+# 镜像只在打版本 tag 时发布，但早期推 main / 每次构建留下的 main、sha-xxxxx
+# 标签还在占空间（GitHub Packages 免费额度 500MB）。这个手工流程用来清掉它们，
+# 只留 latest 和版本号（1.8 / 1.8.0）。
+#
+# 用法：Actions 页面 → 清理 GHCR 旧镜像 → Run workflow
+#   第一次保持 dry_run 勾选，先看看会删什么；确认清单没问题，再跑一次取消勾选。
+# 不用配密钥：GITHUB_TOKEN + packages: write 就能删自己仓库的包版本。
+name: 清理 GHCR 旧镜像
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 只打印将要删除的清单，不真删
+        type: boolean
+        default: true
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # 删除包版本就靠这一行
+    steps:
+      - name: 拉代码（脚本在 .github/scripts/ 下）
+        uses: actions/checkout@v4
+
+      - name: 列出并清理
+        run: node .github/scripts/ghcr-prune.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}

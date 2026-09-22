@@ -41,10 +41,6 @@ docker run -d --name mimo-train-live -p 8787:8787 \
   -v mimo-data:/app/data ghcr.io/evi1j/mimo-rl-lens:latest
 ```
 
-> 镜像可见性默认跟仓库走：本仓库哪天转成私有，镜像也会变私有。那时要拉镜像的人
-> 用**自己的** GitHub 账号登录（`docker login ghcr.io -u <自己的用户名>`，
-> PAT 带 `read:packages`），并且账号得有这个包的读权限——不要用别人的账号。
-
 ### 本机 Node
 
 ```bash

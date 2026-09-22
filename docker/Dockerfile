@@ -6,10 +6,11 @@
 #     docker run -d --name mimo-train-live -p 8787:8787 -v mimo-data:/app/data mimo-train-live:latest
 # 更省事的做法是用同目录的 docker-compose.yml。
 
-# Node 必须 ≥22.5（内置 node:sqlite 用来存档）；22.13 起不用再加
-# --experimental-sqlite，所以用 22 这个大版本标签就够。要锁死小版本就改成
-# docker build --build-arg NODE_VERSION=22.22 ...
-ARG NODE_VERSION=22
+# Node 版本：24 = 当前 LTS（v24.21.0，2026-09 时点），镜像跟这条线走小版本更新。
+# 本机开发只要 ≥22.5 就行（内置 node:sqlite 用来存档），但镜像一律上 LTS。
+# 想换：docker build --build-arg NODE_VERSION=26 ...（26 是 Current 线），
+# 或者锁到某个补丁版：--build-arg NODE_VERSION=24.21.0
+ARG NODE_VERSION=24
 FROM node:${NODE_VERSION}-bookworm-slim
 
 LABEL org.opencontainers.image.title="mimo-train-live" \

@@ -17,11 +17,15 @@
 
 ## 用 Docker 跑
 
-镜像零第三方依赖（存档用 Node 内置的 `node:sqlite`），`/app/data` 挂卷保存历史：
+镜像零第三方依赖（存档用 Node 内置的 `node:sqlite`），`/app/data` 挂卷保存历史。
+基础镜像跟 **Node 24 LTS**（写 Dockerfile 时的 `v24.21.0`），要换版本用 build-arg：
 
 ```bash
 docker compose -f docker/docker-compose.yml up -d --build
 docker compose -f docker/docker-compose.yml logs -f
+
+# 换 Node（24 = LTS 线，26 = Current 线；也可以锁到补丁版 24.21.0）
+docker build -f docker/Dockerfile --build-arg NODE_VERSION=26 -t mimo-train-live:latest .
 ```
 
 打开 `http://<宿主机IP>:8787`。构建上下文是**仓库根**（镜像要 `src/` 和 `public/`），
@@ -55,6 +59,8 @@ npm run setup           # 登记 git 钩子目录（见「开发约定」）
 
 Node 版本要求写在 `package.json` 的 `engines` 里（`>=22.5`，低于它也能跑，
 只是要靠 wasm 兜底，所以 npm 只警告不拦），`.nvmrc` 里写的是 `22`。
+**镜像不受这两个约束**：`docker/Dockerfile` 默认跟 Node 24 LTS（`ARG NODE_VERSION`），
+本机开发留在 22 也没关系。
 
 ## 常用命令
 

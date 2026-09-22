@@ -202,6 +202,20 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
   await sleep(250);
   check('Esc 关闭抽屉', drawer.hidden);
 
+  /* ---------- 10. 关掉后别被数据刷新弹回来 ----------
+     页面每 10s 拉一次数据，拉完会顺手重画抽屉（让讲解里的实时数值跟上）。
+     抽屉关掉时 glCur 故意留着（下次点开要判断有没有跨类），所以「关了」和「开着」
+     在 glCur 上长一个样 —— 重画必须先看抽屉是不是还开着，否则刚关就被弹回来。 */
+  console.log('\n=== 关掉后不再自己弹回来 ===');
+  click(guide);
+  await sleep(300);
+  click(doc.body);
+  await sleep(250);
+  check('点抽屉外面收起', drawer.hidden);
+  await sleep(12000);   // 熬过一次 10s 的数据刷新
+  check('刷新数据后抽屉不会自己弹开', drawer.hidden,
+    '刷新后 hidden=' + drawer.hidden);
+
   console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
   process.exit(fail ? 1 : 0);
 })().catch(function (e) {

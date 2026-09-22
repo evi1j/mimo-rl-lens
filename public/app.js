@@ -541,6 +541,10 @@
      点击任意指标卡片或面板标题旁的「?」打开。
      now 段是拿实时数值算出来的，所以讲的内容跟着数据走。 */
   var glCur = null;
+  /* 抽屉是不是开着。不能只看 glCur —— 关掉时它故意留着（下次点开要判断有没有跨类），
+     于是「关了」和「开着」在 glCur 上长一个样。少了这个标志，10s 一次的数据刷新
+     会把刚关掉的抽屉又弹出来（刷新会重渲染抽屉，而重渲染顺手就把它显示出来）。 */
+  var glOpen = false;
 
   /* AI 讲解的运行状态。
      glAi[key] = {status:'done'|'error', text, think, model, err} —— 结果按指标缓存，
@@ -730,6 +734,9 @@
   function renderGlossary(key, keepScroll) {
     var drawer = $("gl-drawer"), mask = $("gl-mask"), body = $("gl-body");
     if (!drawer || !body) return;
+    /* keepScroll 只有「刷新当前内容」这一种用法（10s 轮询、补拉完数据）。
+       抽屉已经关了就别画 —— 否则关掉的抽屉会被下一次数据刷新重新弹开。 */
+    if (keepScroll && !glOpen) return;
     var savedScroll = keepScroll ? body.scrollTop : 0;
 
     // 正在某个指标上吐字时切走了：收尾，把半截结果存回缓存
@@ -829,6 +836,7 @@
 
     drawer.hidden = false;
     mask.hidden = false;
+    glOpen = true;
     body.scrollTop = keepScroll ? savedScroll : 0;
   }
 
@@ -836,6 +844,7 @@
     var d = $("gl-drawer"), m = $("gl-mask");
     if (d) d.hidden = true;
     if (m) m.hidden = true;
+    glOpen = false;
     if (glAiBusy) glAiStop(); // 抽屉都关了就别再烧 token，半截结果存进缓存
     /* glCur 故意不清空：它记的是「最近一次讲过的对象」。切到别的视图（点导航
        会让抽屉先关掉）再点开新图时，要靠它判断这次是不是跨了类别 —— 跨类才把

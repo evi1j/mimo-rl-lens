@@ -262,6 +262,14 @@ compose 里是 `context: ..` + `dockerfile: docker/Dockerfile`。
 规则在 `.github/scripts/ghcr-prune.js`：只留 `latest` 和纯版本号，其余删掉。
 现在的 workflow 已经不打 sha 标签了，以后不会再堆。
 
+**清理脚本有个必须绕开的坑**：一次构建推上去的是「1 个索引 + 每平台 1 份子清单 +
+每平台 1 份证明清单」，而 GHCR 的版本列表里**只有索引带标签，子清单全是无标签版本**。
+只按标签判断会把 `latest` 引用的 amd64/arm64 子清单当垃圾删掉，结果标签还在、内容没了，
+`docker pull` 报 `failed to copy: ... manifests/sha256:xxx not found`（v1.8.1 修的就是它）。
+所以脚本会先顺着保留的标签去 registry 把引用到的 digest 全记下来一起保；读不到清单时
+退化成「无标签的一律不删」。**改这个脚本时别把这条保护删了。**
+已经打坏的镜像没法原地修（子清单真没了），只能重新构建推送覆盖标签。
+
 查镜像有没有推成功 / 是不是公开（不用登录）：
 `curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:evi1j/mimo-rl-lens:pull"` 取匿名
 token，再带 `Authorization: Bearer <token>` 去 GET `/v2/evi1j/mimo-rl-lens/manifests/latest`；

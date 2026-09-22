@@ -32,15 +32,18 @@ docker compose -f docker/docker-compose.yml down        # 停掉
 然后打开 `http://<宿主机IP>:8787`。历史数据存在卷里（`board-data` → 容器的 `/app/data`），
 删容器不丢，要清空才需要 `docker volume rm`。
 
-也可以直接拉已发布的镜像（不用自己构建）：
+镜像托管在 GitHub 的 GHCR（`ghcr.io/evi1j/mimo-rl-lens`），是**公开的**，
+直接拉就行，不用登录。
 
 ```bash
+docker pull ghcr.io/evi1j/mimo-rl-lens:latest
 docker run -d --name mimo-train-live -p 8787:8787 \
   -v mimo-data:/app/data ghcr.io/evi1j/mimo-rl-lens:latest
 ```
 
-私有镜像要先登录一次：`echo <PAT> | docker login ghcr.io -u evi1j --password-stdin`
-（PAT 需要 `read:packages` 权限）。
+> 镜像可见性默认跟仓库走：本仓库哪天转成私有，镜像也会变私有。那时要拉镜像的人
+> 用**自己的** GitHub 账号登录（`docker login ghcr.io -u <自己的用户名>`，
+> PAT 带 `read:packages`），并且账号得有这个包的读权限——不要用别人的账号。
 
 ### 本机 Node
 

@@ -240,8 +240,14 @@ compose 里是 `context: ..` + `dockerfile: docker/Dockerfile`。
 
 `.github/workflows/docker-publish.yml`：推 `main` 或打 `v*` tag 自动构建并推
 `ghcr.io/evi1j/mimo-rl-lens`（amd64 + arm64）。不用配密钥 —— 用 `GITHUB_TOKEN` + 文件里
-的 `permissions: packages: write`。镜像可见性跟仓库走（私有仓库 → 私有镜像）。
+的 `permissions: packages: write`。**镜像当前是公开的**（匿名 token 就能拉到 manifest），
+可见性默认跟仓库走，可在包设置里改。
 坑：`docker/metadata-action` 的 `tags` 是块标量，里面写 `#` 注释会被当成标签内容。
+
+查镜像有没有推成功 / 是不是公开（不用登录）：
+`curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:evi1j/mimo-rl-lens:pull"` 取匿名
+token，再带 `Authorization: Bearer <token>` 去 GET `/v2/evi1j/mimo-rl-lens/manifests/latest`；
+返回 200 就是「存在且公开」，401 denied 是私有或还没推。
 
 本机 docker CLI 在 `/usr/local/bin/docker`（Bash 工具的 PATH 里没有），且沙箱下需要
 `DOCKER_BUILDKIT=0` + `PATH="/usr/local/bin:$PATH"` 才能跑 build / compose。

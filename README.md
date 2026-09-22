@@ -24,16 +24,34 @@
 ### Docker（推荐）
 
 ```bash
+git clone <本仓库地址> && cd mimo-train-live
+cp config.example.json config.json    # 可选：要 AI 讲解才需要，字段见下面「配置」
 docker compose -f docker/docker-compose.yml up -d --build
+```
+
+然后打开 `http://<宿主机IP>:8787`。
+
+```bash
 docker compose -f docker/docker-compose.yml logs -f     # 看日志
 docker compose -f docker/docker-compose.yml down        # 停掉
 ```
 
-然后打开 `http://<宿主机IP>:8787`。历史数据存在卷里（`board-data` → 容器的 `/app/data`），
-删容器不丢，要清空才需要 `docker volume rm`。
+**怎么给它配置**。镜像里刻意没有 `config.json`（避免 key 被烤进镜像层），所以要自己送进去，
+两条路任选（不配也能跑，只是没有 AI 讲解）：
 
-**怎么给它配置**：镜像里不含 `config.json`，所以要么挂一份进去，要么填 compose 里的
-`LLM_*` 环境变量 —— 两种做法都写在下面「配置」那一节（不配也能跑，只是没有 AI 讲解）。
+- **挂配置文件**：把 `docker/docker-compose.yml` 里 `- ../config.json:/app/config.json:ro`
+  那行的注释去掉。前提：宿主上这个文件**必须先存在**（不存在的话 Docker 会把它建成目录）。
+  挂完改文件**下一次 AI 调用即生效**，不用重启容器。
+- **填环境变量**：compose 里的 `LLM_ENABLED` / `LLM_BASE_URL` / `LLM_MODEL` /
+  `LLM_API_KEY` 四个空位，填了就以它为准（会盖过配置文件）。**留空 = 不覆盖**，
+  交给挂进来的配置文件；注意别填 `LLM_ENABLED=0`，那会把配置文件里的 `enabled: true`
+  一起关掉。
+
+**端口**在 compose 里改（`ports` 那一行和 `PORT` 环境变量一起改）。`config.json` 里的
+`server.port` 在容器里不管用：容器的 `PORT` 环境变量优先级更高，会把它盖掉。
+
+**历史数据**存在卷里（`board-data` → 容器的 `/app/data`），删容器不丢，要清空才需要
+`docker volume rm`。
 
 不想自己构建的话，还有现成的镜像可以直接拉：
 
@@ -42,6 +60,9 @@ docker pull ghcr.io/evi1j/mimo-rl-lens:latest
 docker run -d --name mimo-train-live -p 8787:8787 \
   -v mimo-data:/app/data ghcr.io/evi1j/mimo-rl-lens:latest
 ```
+
+它同样不含 `config.json`：要配置就加 `-v ./config.json:/app/config.json:ro`，
+或者加 `-e LLM_ENABLED=1 -e LLM_BASE_URL=... -e LLM_MODEL=... -e LLM_API_KEY=...`。
 
 ### 本机 Node
 
@@ -55,6 +76,8 @@ Node 更旧时才需要 `npm install`（用纯 wasm 的 `node-sqlite3-wasm` 兜�
 另外需要能访问 `https://mimo.xiaomi.com/rl/`。
 
 ## 配置
+
+> Docker 部署怎么把配置送进容器，见上面「Docker（推荐）」那节；这里讲的是字段本身。
 
 配置是可选的 —— 不配也能跑，只是没有 AI 讲解（会自动回落到内置规则引擎，页面不空白）。
 
@@ -80,23 +103,12 @@ cp config.example.json config.json    # 复制模板再填
 `host` 填 `0.0.0.0` 时局域网内其他设备也能访问，填 `127.0.0.1` 只允许本机。
 **这一项是唯一需要重启才生效的配置**（端口只能在启动时绑定）。
 
-用环境变量覆盖更省事，优先级高于 `config.json`：
+**用环境变量覆盖**（优先级高于 `config.json`）：
 
-- `PORT` / `HOST` —— 端口与监听地址，临时换个端口：`PORT=8799 node src/server.js`
-- `LLM_ENABLED=1` / `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` —— AI 那四项，
-  Docker 里不用挂配置文件就靠它们
+- `PORT` / `HOST` —— 临时换个端口：`PORT=8799 node src/server.js`
+- `LLM_ENABLED=1` / `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` —— AI 那四项
 
-`config.json` 含真实 API key，**不入库**（已在 `.gitignore` 里），也**不会进镜像**
-—— 镜像里刻意没有这个文件，所以 Docker 部署有两条路：
-
-- **挂载**：`docker/docker-compose.yml` 里去掉 `- ../config.json:/app/config.json:ro`
-  那行的注释（宿主上这个文件必须先存在，不存在的话 Docker 会把它建成目录）。
-  改完文件**下一次 AI 调用即生效**，不用重启容器。
-- **环境变量**：compose 里留了 `LLM_ENABLED` / `LLM_BASE_URL` / `LLM_MODEL` /
-  `LLM_API_KEY` 四个空位，填了就以它为准（会盖过配置文件）。
-
-容器里**改端口请在 compose 里改**（`ports` + `PORT` 环境变量）：`server.port` 只在进程
-启动时读一次，而容器的 `PORT` 环境变量优先级更高，会把它盖掉。
+`config.json` 含真实 API key，**不入库**（已在 `.gitignore` 里），也**不会进镜像**。
 
 ## 数据存在哪
 

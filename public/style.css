@@ -26,6 +26,9 @@
   /* 教练抽屉的宽度。可拖（左边缘那条把手），记在 localStorage。
      抽屉是「挤压式」的：打开时页面给右边让出这么多，内容重排、不被盖住。 */
   --coach-w: 560px;
+  /* 两条吸顶栏的高度：导航条要吸在顶栏「下面」，就得知道顶栏多高 */
+  --topbar-h: 67px;   /* 66 + 1px 下边框 */
+  --topnav-h: 46px;
 }
 
 [data-theme="light"] {
@@ -87,13 +90,15 @@ body::before {
 .dim { color: var(--dim); }
 
 /* ---------- topbar ---------- */
+/* 顶栏要压过下面那条导航（.topnav z-index 30）：两条都是 sticky top:0，
+   谁在上面谁通吃 —— 之前导航条盖住顶栏，教练按钮一滚就没了。 */
 .topbar {
-  position: sticky; top: 0; z-index: 20;
+  position: sticky; top: 0; z-index: 40;
   backdrop-filter: blur(12px);
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   border-bottom: 1px solid var(--border-soft);
 }
-.topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 66px; }
+.topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: calc(var(--topbar-h) - 1px); }
 
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .brand-mark {
@@ -276,7 +281,7 @@ body::before {
 .wrap.layout { max-width: 1560px; }
 .layout { display: grid; grid-template-columns: minmax(0,1fr) 348px; gap: 18px; align-items: start; }
 .main-col { min-width: 0; }
-.side-col { position: sticky; top: 84px; min-width: 0; }
+.side-col { position: sticky; top: calc(var(--topbar-h) + var(--topnav-h) + 18px); min-width: 0; }
 
 .narrator { padding: 16px 16px 14px; }
 
@@ -429,13 +434,14 @@ body::before {
 }
 
 /* ---------- v1.2 新增：导航 / 时钟 / 构成 / 指标库 ---------- */
+/* 吸在顶栏底下（不是跟它抢 top:0）：两栏叠着显示，滚多远都在。 */
 .topnav {
-  position: sticky; top: 0; z-index: 30;
+  position: sticky; top: var(--topbar-h); z-index: 30;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border-soft);
 }
-.topnav-inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 46px; }
+.topnav-inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: var(--topnav-h); }
 .tabs { display: flex; gap: 4px; }
 .tabs a {
   padding: 6px 14px; border-radius: 8px; font-size: 13.5px; font-weight: 500;

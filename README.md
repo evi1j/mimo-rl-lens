@@ -15,6 +15,24 @@
 4. **问得到** —— 顶栏右侧的「AI 模型训练教练」可以随便问，它自己决定查哪些数据，
    既能讲 RL 训练原理，也能落到这块板上的真实数字；多轮追问，还知道你现在在看哪张图。
 
+## 用 Docker 跑
+
+镜像零第三方依赖（存档用 Node 内置的 `node:sqlite`），`/app/data` 挂卷保存历史：
+
+```bash
+docker compose -f docker/docker-compose.yml up -d --build
+docker compose -f docker/docker-compose.yml logs -f
+```
+
+打开 `http://<宿主机IP>:8787`。构建上下文是**仓库根**（镜像要 `src/` 和 `public/`），
+所以要 `-f` 显式指定 `docker/Dockerfile`——这也是 `.dockerignore` 放在根目录的原因
+（它顺带把含 API key 的 `config.json` 挡在镜像外）。
+
+AI 那几项支持环境变量，不必挂配置文件：`LLM_ENABLED=1` + `LLM_BASE_URL` /
+`LLM_MODEL` / `LLM_API_KEY`（在 compose 的 `environment` 里改即可）。
+容器里的推理服务在宿主上时，`baseUrl` 用 `host.docker.internal`（Linux 需加
+`extra_hosts: host-gateway`，compose 文件里已注释好）。细节见 `docker/` 两个文件的注释。
+
 ## 快速开始
 
 ```bash

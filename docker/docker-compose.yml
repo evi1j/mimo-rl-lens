@@ -1,0 +1,64 @@
+# MiMo-V2.6 RL 训练实时看板 —— Docker 部署
+#
+# 用法（在本目录或仓库根目录执行都行）：
+#     docker compose -f docker/docker-compose.yml up -d --build
+#     docker compose -f docker/docker-compose.yml logs -f
+#     docker compose -f docker/docker-compose.yml down
+# 然后打开 http://<宿主机IP>:8787
+#
+# 构建上下文为什么是仓库根（context: ..）：镜像要的是 src/ 与 public/，
+# Dockerfile 放在 docker/ 只是为了不污染根目录，所以得显式指 dockerfile。
+
+services:
+  board:
+    build:
+      context: ..                    # 相对本文件 → 仓库根
+      dockerfile: docker/Dockerfile
+    image: mimo-train-live:latest
+    container_name: mimo-train-live
+    restart: unless-stopped
+
+    # 宿主:容器。只想本机访问就写成 "127.0.0.1:8787:8787"。
+    ports:
+      - "8787:8787"
+
+    environment:
+      TZ: Asia/Shanghai
+      PORT: "8787"
+      HOST: "0.0.0.0"
+
+      # ── AI（可选）──────────────────────────────────────────────
+      # 全都不填也能跑：解说走内置规则引擎，看板、图表讲解、数据存档都正常。
+      # 要接自己的 OpenAI 兼容接口就把 LLM_ENABLED 改成 "1" 并填下面三项。
+      # 优先级：环境变量 > config.json，所以这里配了就不必再挂配置文件。
+      LLM_ENABLED: "0"
+      LLM_BASE_URL: ""               # 例：http://host.docker.internal:8090/v1
+      LLM_MODEL: ""                  # 例：qwen2.5-32b
+      LLM_API_KEY: ""
+
+    volumes:
+      # SQLite 库（历史指标、解说流、教练对话）。删掉这个卷 = 清掉全部历史，
+      # 下次启动会重建，跟本地删 data/ 一样。
+      - board-data:/app/data
+
+      # 想用自己那份 config.json 覆盖端口 / AI，把下面这行的注释去掉：
+      # - ../config.json:/app/config.json:ro
+
+    # Linux 上要让容器访问宿主机的推理服务（host.docker.internal），再加：
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
+    healthcheck:
+      # 镜像里没有 curl / wget，用 node 自己探首页
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://127.0.0.1:' + (process.env.PORT || 8787) + '/', function (r) { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', function () { process.exit(1); })"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  board-data:

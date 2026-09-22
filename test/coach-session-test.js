@@ -61,21 +61,47 @@ check('一组消息要算上每条的角色开销',
 console.log('\n=== 窗口与水位线 ===');
 const k = session.ctxConfig({});
 check('默认窗口 32768', k.window === 32768, String(k.window));
-check('水位线是窗口的 75%', k.trigger === Math.round(32768 * 0.75), String(k.trigger));
 check('预留里含本轮生成与工具返回（不在 history 里，但同样占窗口）', k.reserve > 4000, String(k.reserve));
+/* 可用空间 = 窗口 - 本轮预留。水位线只能按它算：按整个窗口算的话，
+   预留那固定的一万多 token 会一直挂在分子里 —— 空会话也显示 44%，
+   而且触发线（24576）会比可用空间（20256）还大，等于永远压不到。 */
+check('可用空间是窗口刨掉本轮预留',
+  k.cap === k.window - k.reserve, k.cap + ' = ' + k.window + ' - ' + k.reserve);
+check('水位线是可用空间的 75%，不是整个窗口的',
+  k.trigger === Math.round(k.cap * 0.75) && k.trigger < k.window,
+  k.trigger + ' vs 窗口的 ' + Math.round(k.window * 0.75));
+check('触发线必须落在可用空间之内（否则永远压不到）', k.trigger < k.cap, String(k.trigger));
 check('窗口可以配', session.ctxConfig({ coachContextWindow: 8000 }).window === 8000);
 check('水位比例可以配',
-  session.ctxConfig({ coachContextWindow: 8000, coachCompressAt: 0.6 }).trigger === 4800,
+  session.ctxConfig({ coachContextWindow: 8000, coachCompressAt: 0.6 }).trigger ===
+    Math.round(session.ctxConfig({ coachContextWindow: 8000 }).cap * 0.6),
   String(session.ctxConfig({ coachContextWindow: 8000, coachCompressAt: 0.6 }).trigger));
 check('水位比例写错（>1 或 0）时回落默认，不会变成「永不压缩」',
-  session.ctxConfig({ coachCompressAt: 1.5 }).trigger === Math.round(32768 * 0.75) &&
-  session.ctxConfig({ coachCompressAt: 0 }).trigger === Math.round(32768 * 0.75));
+  session.ctxConfig({ coachCompressAt: 1.5 }).trigger === k.trigger &&
+  session.ctxConfig({ coachCompressAt: 0 }).trigger === k.trigger);
 
 const small = session.measure({
   systemText: '系统提示词', summary: '', history: [{ content: '你好' }], questionText: '训练到第几步',
 }, {});
 check('短对话远不到水位线', small.over === false, JSON.stringify(small));
-check('给前端的百分比按整个窗口算', small.pct > 0 && small.pct < 100, String(small.pct));
+check('给前端的百分比按可用空间算（0~100）', small.pct >= 0 && small.pct < 100, String(small.pct));
+
+/* 这条是本轮修的 bug：空会话不该显示百分之四十几。
+   预留（工具与回答的位置）是每轮都留的固定量，不算「已用」。 */
+const emptySt = session.measure({
+  systemText: coach.COACH_SYSTEM, summary: '', history: [], questionText: '',
+}, {});
+check('空会话的水位很低（不再一上来就 44%）', emptySt.pct < 20, String(emptySt.pct));
+check('预留不计入给前端的百分比（只进 used）',
+  emptySt.load === emptySt.system && emptySt.used === emptySt.load + emptySt.reserve,
+  'load=' + emptySt.load + ' used=' + emptySt.used);
+check('聊得越长水位越高（不再是常量）', (function () {
+  const grow = [];
+  for (let i = 0; i < 30; i++) grow.push({ content: '第 ' + i + ' 轮问答，'.repeat(30) });
+  const st = session.measure({ systemText: coach.COACH_SYSTEM, summary: '',
+    history: grow, questionText: '' }, {});
+  return st.pct > emptySt.pct + 15;
+})());
 
 const bigHist = [];
 for (let i = 0; i < 200; i++) bigHist.push({ content: '第 ' + i + ' 轮的问答内容，'.repeat(20) });

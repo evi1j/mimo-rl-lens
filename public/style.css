@@ -1018,8 +1018,16 @@ html.is-coach-resizing .coach-drawer { transition: none; }
 }
 .coach-meter[hidden] { display: none; }
 .coach-meter-bar {
-  width: 34px; height: 4px; border-radius: 999px;
+  position: relative;
+  width: 44px; height: 5px; border-radius: 999px;
   background: var(--border); overflow: hidden;
+}
+.coach-meter-bar > i { position: relative; z-index: 1; }
+/* 触发线：越过它就会自动压缩。画在条上，看得出还剩多少余量 */
+.coach-meter-bar::after {
+  content: ""; position: absolute; z-index: 2;
+  left: var(--mark, 75%); top: 0; bottom: 0; width: 1px;
+  background: var(--dim-2); opacity: .55;
 }
 .coach-meter-bar > i {
   display: block; height: 100%; width: 0; border-radius: 999px;

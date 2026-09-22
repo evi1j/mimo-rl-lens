@@ -830,18 +830,23 @@
     var m = $("coach-meter");
     if (!m || !c) return;
     var pct = Math.max(0, Math.min(100, Number(c.pct) || 0));
+    /* 触发线跟着配置走（默认可用空间的 75%）：到线就压，压完会掉下来，
+       所以「红」是罕见状态 —— 多半只在压缩没赶上时出现。黄线是提前提醒。 */
+    var hot = Math.round((Number(c.ratio) || 0.75) * 100);
+    var warn = Math.max(1, hot - 15);
     m.hidden = false;
-    /* 60% 起变黄、80% 起变红：红线是「快到压缩线了」，黄线只是提醒 */
-    m.className = "coach-meter" + (pct >= 80 ? " is-hot" : (pct >= 60 ? " is-warn" : ""));
+    m.className = "coach-meter" + (pct >= hot ? " is-hot" : (pct >= warn ? " is-warn" : ""));
+    m.style.setProperty("--mark", hot + "%");
     var f = $("coach-meter-fill"), n = $("coach-meter-n");
     if (f) f.style.width = pct + "%";
     if (n) n.textContent = pct + "%";
     var k = function (n) { return Math.round((Number(n) || 0) / 1000) + "k"; };
-    var bits = ["约 " + k(c.used) + " / " + k(c.window) + " tokens"];
+    var bits = ["这段会话已用约 " + k(c.load) + " tokens，能用到 " + k(c.cap)];
+    bits.push("另留 " + k(c.reserve) + " 给本轮的工具与回答");
     if (c.summary) bits.push("更早的部分已压成摘要");
     if (c.compressed) bits.push("累计压缩 " + c.compressed + " 次");
     if (c.dropped) bits.push("本轮丢掉最旧的 " + c.dropped + " 条");
-    bits.push("到 " + Math.round((Number(c.ratio) || 0.75) * 100) + "% 会自动压缩");
+    bits.push("到 " + hot + "% 会自动压缩");
     m.title = bits.join("；");
   }
 

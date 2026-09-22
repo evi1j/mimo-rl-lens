@@ -563,7 +563,8 @@ const server = http.createServer(async (req, res) => {
     sendC({
       context: {
         sid: sid, used: ps.used, window: ps.window, pct: ps.pct,
-        trigger: ps.trigger, ratio: ps.ratio,
+        trigger: ps.trigger, ratio: ps.ratio, cap: ps.cap, load: ps.load,
+        reserve: ps.reserve,
         compressed: turn.stats.compressed || 0, justCompressed: didCompress,
         dropped: ps.dropped || 0, msgs: turn.history.length, summary: !!turn.summary,
       },

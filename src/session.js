@@ -81,31 +81,41 @@ function ctxConfig(cfg) {
      窗口填得很小时（小模型），不设上限的话预留会把整个窗口吃光，
      于是每轮都判成「超了」、预算算成 0，只剩最近一条历史，聊不下去。 */
   const reserve = Math.min(out + TOOL_RESERVE + SLACK, Math.round(window * 0.5));
+  /* 真正能放「提示词 + 摘要 + 历史 + 本问」的地方：窗口刨掉本轮预留。
+     水位线和百分比都按它算 —— 按整个窗口算的话，预留（固定的一万多 token）
+     会一直挂在分子里，空会话也显示百分之四十几；而且触发线会比可用空间还大，
+     等于永远压不到。 */
+  const cap = Math.max(1000, window - reserve);
   return {
     window: window,
     ratio: ratio,
-    trigger: Math.round(window * ratio),
+    cap: cap,                  // 历史可用空间
+    trigger: Math.round(cap * ratio),
     reserve: reserve,          // 本轮生成 + 工具返回 + 余量
     keepMsgs: Math.max(2, Number(c.coachKeepMsgs) || DEFAULT_KEEP_MSGS),
     summaryChars: Math.max(300, Number(c.coachSummaryChars) || DEFAULT_SUMMARY_CHARS),
   };
 }
 
-/* 水位：这一轮预计要占多少 token（含生成与工具的预留）。 */
+/* 水位。
+     load  = 提示词 + 摘要 + 历史 + 本问 —— 这段会话累计占了多少，前端百分比看它；
+     used  = load + 本轮预留 —— 这一轮请求大概要占窗口多少，诊断看它；
+     over  = load 到没到可用空间的触发线（到了就该压）。 */
 function measure(parts, cfg) {
   const k = ctxConfig(cfg);
   const system = estTokens(parts.systemText);
   const summary = estTokens(parts.summary);
   const history = estMsgs(parts.history);
   const question = estTokens(parts.questionText);
-  const used = system + summary + history + question + k.reserve;
+  const load = system + summary + history + question;
+  const used = load + k.reserve;
   return {
     system: system, summary: summary, history: history, question: question,
-    reserve: k.reserve, used: used, window: k.window, ratio: k.ratio,
-    trigger: k.trigger,
-    // 给前端看的百分比：占整个窗口的多少（不是占触发线的多少）
-    pct: Math.min(100, Math.round((used / k.window) * 100)),
-    over: used >= k.trigger,
+    load: load, reserve: k.reserve, used: used, window: k.window, cap: k.cap,
+    ratio: k.ratio, trigger: k.trigger,
+    // 给前端看的百分比：累计占用 / 这段会话真正能用的空间（不是整个窗口）
+    pct: Math.min(100, Math.round((load / k.cap) * 100)),
+    over: load >= k.trigger,
   };
 }
 

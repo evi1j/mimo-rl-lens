@@ -545,13 +545,19 @@ check('不再保留「限定输出范围时严格照办」那条（并入回答�
   check('发请求时带上 sid（后端按它取这段的上下文）',
     pkgs[pkgs.length - 1].sid === 's1', String(pkgs[pkgs.length - 1].sid));
   const meter = $('coach-meter');
-  check('水位条显示这一轮占窗口的百分比', meter.hidden === false && /上下文\s*37%/.test(meter.textContent),
+  check('水位条显示这段会话占可用空间的百分比', meter.hidden === false && /上下文\s*37%/.test(meter.textContent),
     meter.hidden + ' / ' + meter.textContent);
   check('水位条是一条进度条，不是一颗看着像能点的胶囊',
     /^\d+%$/.test($('coach-meter-n').textContent) && $('coach-meter-fill').style.width === '37%',
     $('coach-meter-n').textContent + ' / ' + $('coach-meter-fill').style.width);
+  /* 触发线跟着后端的压缩比例走（默认 75%）：写死的话改了配置就对不上 */
+  check('条上画出压缩触发线，位置跟配置一致',
+    meter.style.getPropertyValue('--mark') === '75%',
+    meter.style.getPropertyValue('--mark') || '(没设)');
   check('悬浮说明里讲清了压缩与摘要（压缩是悄悄做的，得让人看见）',
     /自动压缩/.test(meter.title) && /压缩 \d+ 次/.test(meter.title), meter.title);
+  check('悬浮说明里分开讲「已用」和「给本轮留的」—— 混在一起会看着像卡住不动',
+    /已用/.test(meter.title) && /另留/.test(meter.title), meter.title);
 
   restoreMsgs = [{ role: 'user', content: '老会话里的提问' }];
   click($('coach-new'));

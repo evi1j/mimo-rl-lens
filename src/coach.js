@@ -174,7 +174,8 @@ function buildPlan(payload) {
   const stats = session.measure({
     systemText: systemText, summary: '', history: history, questionText: questionText,
   }, cfg);
-  const budget = Math.max(0, k.window - k.reserve - stats.system - stats.question - 64);
+  /* 能装历史的就这么多：可用空间刨掉提示词与本问（摘要算在 system 里）。 */
+  const budget = Math.max(0, k.cap - stats.system - stats.question - 64);
   const fit = session.fitHistory(history, budget);
 
   const msgs = [{ role: 'system', content: systemText }];
@@ -184,12 +185,15 @@ function buildPlan(payload) {
   const out = Object.assign({}, stats, {
     summary: session.estTokens(summary),
     history: fit.tokens,
+    /* 百分比看的是「这段会话累计占了可用空间的多少」—— 本轮预留（工具与回答）
+       每轮都一样，算进去的话空会话也会显示百分之四十几，看着像卡住了。 */
+    load: stats.system + stats.question + fit.tokens,
     used: stats.system + stats.question + fit.tokens + k.reserve,
     dropped: fit.dropped,
     total: history.length,
   });
-  out.pct = Math.min(100, Math.round((out.used / k.window) * 100));
-  out.over = out.used >= k.trigger;
+  out.pct = Math.min(100, Math.round((out.load / k.cap) * 100));
+  out.over = out.load >= k.trigger;
   return { msgs: msgs, stats: out, keep: k.keepMsgs, window: k.window, trigger: k.trigger };
 }
 

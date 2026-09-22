@@ -573,6 +573,15 @@ svg .axis-text { fill: var(--dim-2); font-size: 10px; font-family: ui-monospace,
   background: var(--panel); border-left: 1px solid var(--border);
   box-shadow: -18px 0 48px rgba(0, 0, 0, .16);
 }
+/* 教练抽屉也占着右侧 fixed，而且 z-index 更高（71）—— 讲解不盖过它就会被整块
+   压在底下，看着像「点了没反应」。所以教练开着时讲解盖在它上面，并且至少和它
+   一样宽（否则会露出教练左边一条）。
+   为什么不并排：两个加一起一千多像素，正文就剩一条缝了。
+   关掉讲解教练原样还在 —— 它本来就没被关，只是被盖住。 */
+html.coach-open .gl-drawer {
+  z-index: 72;
+  width: max(min(520px, 94vw), var(--coach-w));
+}
 .gl-drawer[hidden], .gl-mask[hidden] { display: none; }
 .gl-head {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;

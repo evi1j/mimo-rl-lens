@@ -248,9 +248,12 @@ compose 里是 `context: ..` + `dockerfile: docker/Dockerfile`。
 `llm` 段是每次请求重新读文件（`loadConfig()` 里 `readFileSync`），改完下次调用即生效；
 `server` 段只在启动时读一次，改了必须重启。
 
-`.github/workflows/docker-publish.yml`：推 `main` 或打 `v*` tag 自动构建并推
-`ghcr.io/evi1j/mimo-rl-lens`（amd64 + arm64）。不用配密钥 —— 用 `GITHUB_TOKEN` + 文件里
-的 `permissions: packages: write`。**镜像当前是公开的**（匿名 token 就能拉到 manifest），
+`.github/workflows/docker-publish.yml`：**只在打 `v*` tag 时**构建并推
+`ghcr.io/evi1j/mimo-rl-lens`（amd64 + arm64）。平时推 main 不发镜像（省 GHCR 配额），
+提 PR 只构建不推送（验证 Dockerfile）。`latest` = 最新发布版，**不是** main 的最新提交。
+要发布就打 tag：`git tag -a v1.8.0 -m "..." && git push origin v1.8.0`；
+不想发 tag 也想出镜像，去 Actions 页面手动 Run workflow。
+不用配密钥 —— 用 `GITHUB_TOKEN` + 文件里的 `permissions: packages: write`。**镜像当前是公开的**（匿名 token 就能拉到 manifest），
 可见性默认跟仓库走，可在包设置里改。
 坑：`docker/metadata-action` 的 `tags` 是块标量，里面写 `#` 注释会被当成标签内容。
 
